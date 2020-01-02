@@ -108,20 +108,22 @@ struct Configuration {
 };
 
 struct GraphContext {
-    G g;
-    vector<Node> nodes;
-    Cut reference_cut;
-    long num_edges;
+public:
+G g;
+vector<Node> nodes;
+Cut reference_cut;
+long num_edges;
+private:
 };
 
 struct RoundReport {
-    size_t index;
-    size_t capacity_required_for_full_flow;
-    double multi_h_expansion;
-    double g_expansion;
-    long volume;
-    bool relatively_balanced;
-    Cutp cut;
+size_t index;
+size_t capacity_required_for_full_flow;
+double multi_h_expansion;
+double g_expansion;
+long volume;
+bool relatively_balanced;
+Cutp cut;
 };
 
 // TODO
@@ -129,83 +131,83 @@ struct RoundReport {
 
 template <class G>
 struct CutStats {
-    using Node = typename G::Node;
-    using Edge = typename G::Edge;
-    using Cut = set<Node>;
-    using EdgeIt = typename G::EdgeIt;
-    using Bisection = set<Node>;
-    size_t crossing_edges = 0;
+using Node = typename G::Node;
+using Edge = typename G::Edge;
+using Cut = set<Node>;
+using EdgeIt = typename G::EdgeIt;
+using Bisection = set<Node>;
+size_t crossing_edges = 0;
 private:
-    bool is_min_side;
-    size_t min_side = 0;
-    size_t cut_volume = 0;
-    size_t max_side = 0;
-    size_t num_edges = 0;
-    long degreesum() { return num_edges*2;}
-    long noncut_volume () { return degreesum() - cut_volume;}
+bool is_min_side;
+size_t min_side = 0;
+size_t cut_volume = 0;
+size_t max_side = 0;
+size_t num_edges = 0;
+long degreesum() { return num_edges*2;}
+long noncut_volume () { return degreesum() - cut_volume;}
 public:
 
-    CutStats(const G &g, size_t num_vertices, const Cut &cut) {
-        initialize(g, num_vertices, cut);
+CutStats(const G &g, size_t num_vertices, const Cut &cut) {
+    initialize(g, num_vertices, cut);
+}
+
+void initialize(const G &g, size_t num_vertices, const Cut &cut) {
+    for (EdgeIt e(g); e != INVALID; ++e) {
+        ++num_edges;
+        if (is_crossing(g, cut, e)) crossing_edges += 1;
+        if (any_in_cut(g, cut, e)) cut_volume += 1;
     }
 
-    void initialize(const G &g, size_t num_vertices, const Cut &cut) {
-        for (EdgeIt e(g); e != INVALID; ++e) {
-            ++num_edges;
-            if (is_crossing(g, cut, e)) crossing_edges += 1;
-            if (any_in_cut(g, cut, e)) cut_volume += 1;
-        }
+    assert(cut.size() <= num_vertices);
+    size_t other_size = num_vertices - cut.size();
+    min_side = min(cut.size(), other_size);
+    max_side = max(cut.size(), other_size);
+    is_min_side = cut.size() == min_side;
+}
 
-        assert(cut.size() <= num_vertices);
-        size_t other_size = num_vertices - cut.size();
-        min_side = min(cut.size(), other_size);
-        max_side = max(cut.size(), other_size);
-        is_min_side = cut.size() == min_side;
-    }
+static bool is_crossing(const G &g, const Bisection &c, const Edge &e) {
+    bool u_in = c.count(g.u(e));
+    bool v_in = c.count(g.v(e));
+    return u_in != v_in;
+}
 
-    static bool is_crossing(const G &g, const Bisection &c, const Edge &e) {
-        bool u_in = c.count(g.u(e));
-        bool v_in = c.count(g.v(e));
-        return u_in != v_in;
-    }
+static bool any_in_cut(const G &g, const Bisection &c, const Edge &e) {
+    bool u_in = c.count(g.u(e));
+    bool v_in = c.count(g.v(e));
+    return u_in || v_in;
+}
 
-    static bool any_in_cut(const G &g, const Bisection &c, const Edge &e) {
-        bool u_in = c.count(g.u(e));
-        bool v_in = c.count(g.v(e));
-        return u_in || v_in;
-    }
+long minside_volume() {
+    return is_min_side ? cut_volume : noncut_volume();
+}
 
-    long minside_volume() {
-        return is_min_side ? cut_volume : noncut_volume();
-    }
+long maxside_volume() {
+    return is_min_side ? noncut_volume() : cut_volume;
+}
 
-    long maxside_volume() {
-        return is_min_side ? noncut_volume() : cut_volume;
-    }
+size_t diff() {
+    return max_side - min_side;
+}
 
-    size_t diff() {
-        return max_side - min_side;
-    }
+size_t num_vertices() {
+    return min_side + max_side;
+}
 
-    size_t num_vertices() {
-        return min_side + max_side;
-    }
+double imbalance() {
+    return diff() * 1. / num_vertices();
+}
 
-    double imbalance() {
-        return diff() * 1. / num_vertices();
-    }
+double expansion() {
+    return min_side == 0 ? 0 : crossing_edges * 1. / min_side;
+}
 
-    double expansion() {
-        return min_side == 0 ? 0 : crossing_edges * 1. / min_side;
-    }
-
-    void print() {
-        cout << "Edge crossings (E) : " << crossing_edges << endl;
-        cout << "cut size: (" << min_side << " | " << max_side << ")" << endl
-             << "diff: " << diff() << " (" << imbalance() << " of total n vertices)" << endl;
-        cout << "Min side: " << min_side << endl;
-        cout << "E/min(|S|, |comp(S)|) = " << expansion() << endl;
-    }
+void print() {
+    cout << "Edge crossings (E) : " << crossing_edges << endl;
+    cout << "cut size: (" << min_side << " | " << max_side << ")" << endl
+         << "diff: " << diff() << " (" << imbalance() << " of total n vertices)" << endl;
+    cout << "Min side: " << min_side << endl;
+    cout << "E/min(|S|, |comp(S)|) = " << expansion() << endl;
+}
 };
 // Reads the file filename,
 // creates that graph in graph g which is assumed to be empty
@@ -213,117 +215,117 @@ public:
 // And sets each node's original_ids id to be (its id in the file minus one).
 // Of course original_ids must be initialized onto the graph g already earlier.
 static void parse_chaco_format(const string &filename, ListGraph &g, vector<Node> &nodes) {
-    assert(nodes.empty());
-    if(!SILENT) cout << "Reading graph from " << filename << endl;
-    ifstream file;
-    file.open(filename);
-    if (!file) {
-        cerr << "Unable to read file " << filename << endl;
-        exit(1);
-    }
+assert(nodes.empty());
+if(!SILENT) cout << "Reading graph from " << filename << endl;
+ifstream file;
+file.open(filename);
+if (!file) {
+    cerr << "Unable to read file " << filename << endl;
+    exit(1);
+}
 
-    string line;
-    stringstream ss;
+string line;
+stringstream ss;
+getline(file, line);
+ss.str(line);
+
+int n_verts, n_edges;
+ss >> n_verts >> n_edges;
+if(!SILENT) cout << "Reading a graph with V " << n_verts << "E " << n_edges << endl;
+g.reserveNode(n_verts);
+g.reserveNode(n_edges);
+
+for (size_t i = 0; i < n_verts; i++) {
+    Node n = g.addNode();
+    nodes.push_back(n);
+}
+
+for (size_t i = 0; i < n_verts; i++) {
     getline(file, line);
-    ss.str(line);
-
-    int n_verts, n_edges;
-    ss >> n_verts >> n_edges;
-    if(!SILENT) cout << "Reading a graph with V " << n_verts << "E " << n_edges << endl;
-    g.reserveNode(n_verts);
-    g.reserveNode(n_edges);
-
-    for (size_t i = 0; i < n_verts; i++) {
-        Node n = g.addNode();
-        nodes.push_back(n);
-    }
-
-    for (size_t i = 0; i < n_verts; i++) {
-        getline(file, line);
-        ss.clear();
-        ss << line;
-        Node u = nodes[i];
-        size_t v_name;
-        while (ss >> v_name) {
-            Node v = nodes[v_name - 1];
-            if (findEdge(g, u, v) == INVALID) {
-                g.addEdge(u, v);
-            }
+    ss.clear();
+    ss << line;
+    Node u = nodes[i];
+    size_t v_name;
+    while (ss >> v_name) {
+        Node v = nodes[v_name - 1];
+        if (findEdge(g, u, v) == INVALID) {
+            g.addEdge(u, v);
         }
     }
+}
 
-    if (n_verts % 2 != 0) {
-        if(!SILENT) cout << "Odd number of vertices, adding extra one." << endl;
-        Node n = g.addNode();
-        g.addEdge(nodes[0], n);
-        nodes.push_back(n);
-    }
+if (n_verts % 2 != 0) {
+    if(!SILENT) cout << "Odd number of vertices, adding extra one." << endl;
+    Node n = g.addNode();
+    g.addEdge(nodes[0], n);
+    nodes.push_back(n);
+}
 }
 
 void generate_large_graph(G &g, vector<Node> &nodes, size_t n_nodes) {
-    assert(n_nodes > 0);
-    nodes.reserve(n_nodes);
-    for (int i = 0; i < n_nodes; i++) {
-        nodes.push_back(g.addNode());
-    }
+assert(n_nodes > 0);
+nodes.reserve(n_nodes);
+for (int i = 0; i < n_nodes; i++) {
+    nodes.push_back(g.addNode());
+}
 
-    g.addEdge(nodes[0], nodes[1]);
-    g.addEdge(nodes[1], nodes[2]);
-    g.addEdge(nodes[2], nodes[0]);
+g.addEdge(nodes[0], nodes[1]);
+g.addEdge(nodes[1], nodes[2]);
+g.addEdge(nodes[2], nodes[0]);
 
-    int lim1 = n_nodes / 3;
-    int lim2 = 2 * n_nodes / 3;
+int lim1 = n_nodes / 3;
+int lim2 = 2 * n_nodes / 3;
 
-    for (int i = 3; i < lim1; i++) {
-        ListGraph::Node u = nodes[i];
-        ListGraph::Node v = nodes[0];
-        g.addEdge(u, v);
-    }
-    for (int i = lim1; i < lim2; i++) {
-        ListGraph::Node u = nodes[i];
-        ListGraph::Node v = nodes[1];
-        g.addEdge(u, v);
-    }
-    for (int i = lim2; i < n_nodes; i++) {
-        ListGraph::Node u = nodes[i];
-        ListGraph::Node v = nodes[2];
-        g.addEdge(u, v);
-    }
+for (int i = 3; i < lim1; i++) {
+    ListGraph::Node u = nodes[i];
+    ListGraph::Node v = nodes[0];
+    g.addEdge(u, v);
+}
+for (int i = lim1; i < lim2; i++) {
+    ListGraph::Node u = nodes[i];
+    ListGraph::Node v = nodes[1];
+    g.addEdge(u, v);
+}
+for (int i = lim2; i < n_nodes; i++) {
+    ListGraph::Node u = nodes[i];
+    ListGraph::Node v = nodes[2];
+    g.addEdge(u, v);
+}
 }
 
 void write_cut(const vector<Node> &nodes, const Cut &cut) {
-    ofstream file;
-    file.open(OUTPUT_FILE);
-    if (!file) {
-        cout << "Cannot open file " << OUTPUT_FILE << endl;
-        return;
-    }
+ofstream file;
+file.open(OUTPUT_FILE);
+if (!file) {
+    cout << "Cannot open file " << OUTPUT_FILE << endl;
+    return;
+}
 
-    cout << "Writing partition with "
-         << nodes.size()
-         << " nodes to file "
-         << OUTPUT_FILE
-         << endl;
-    for (const auto &n : nodes) {
-        file << (cut.count(n) ? "1" : "0") << "\n";
-    }
-    file.close();
+cout << "Writing partition with "
+     << nodes.size()
+     << " nodes to file "
+     << OUTPUT_FILE
+     << endl;
+for (const auto &n : nodes) {
+    file << (cut.count(n) ? "1" : "0") << "\n";
+}
+file.close();
 }
 
 void read_partition_file(const string &filename, const vector<Node> &nodes, Cut &partition) {
-    ifstream file;
-    file.open(filename);
-    if (!file) {
-        cerr << "Unable to read file " << filename << endl;
-        exit(1);
-    }
-    bool b;
-    size_t i = 0;
-    while (file >> b) {
-        if (b) partition.insert(nodes[i]);
-        ++i;
-    }
-    if (VERBOSE) cout << "Reference patition size: " << partition.size() << endl;
+ifstream file;
+file.open(filename);
+if (!file) {
+    cerr << "Unable to read file " << filename << endl;
+    exit(1);
+}
+bool b;
+size_t i = 0;
+while (file >> b) {
+    if (b) partition.insert(nodes[i]);
+    ++i;
+}
+if (VERBOSE) cout << "Reference patition size: " << partition.size() << endl;
 }
 
 void initGraph(GraphContext &gc, InputConfiguration config) {
@@ -712,9 +714,17 @@ struct CutMatching {
             return true;
         }
 
-        if(config.use_G_phi_target)
+        if(config.use_volume_treshold && last_round->relatively_balanced) {
+            //cout << relatively_balanced << " relatively balanced" << "\n";
+            cout << "CASE2 G Expansion target reached with a cut that is relatively balanced. Cut-matching game has found a balanced cut as good as you wanted it."
+                 << endl;
+            return true;
+        }
+
+        //if(config.use_G_phi_target)
         if(last_round->g_expansion >= config.G_phi_target) {
             if(config.use_volume_treshold && last_round->relatively_balanced) {
+                //cout << relatively_balanced << " relatively balanced" << "\n";
                 cout << "CASE2 G Expansion target reached with a cut that is relatively balanced. Cut-matching game has found a balanced cut as good as you wanted it."
                      << endl;
                 return true;
@@ -726,7 +736,7 @@ struct CutMatching {
                 return true;
             }
         }
-
+    return false;
     }
 
     void run() {
@@ -830,6 +840,194 @@ void parse_options(int argc, char **argv, Configuration &config) {
 // TODO Selecting best cut not only hightest cap
 // TODO extract graph creation from algo
 // TODO extract final answer presentation from algo
+
+
+using CutMap = NodeMap<bool>;
+
+
+
+void unit_flow(const ListDigraph &g, double h, ListDigraph::NodeMap<double> &sink_node_cap, ListDigraph::ArcMap<double> &cross_edge_source,
+               ListDigraph::ArcMap<double> &flow, ListDigraph::NodeMap<double> &node_flow, ListDigraph::NodeMap<int> &degree,
+               ListDigraph::ArcMap<double> &edge_cap, vector<list<ListDigraph::Node>> &level_queue, ListDigraph::NodeMap<int> &node_label) {
+    bool excess_flow = true;
+    unit_start:
+    while (excess_flow) {
+        excess_flow = false;
+        for (int level_iter = 0; level_iter < h - 1; level_iter++) {
+            for (auto list_it = level_queue[level_iter].cbegin(); list_it != level_queue[level_iter].cend(); ++list_it) {
+                if (node_flow[*list_it] > sink_node_cap[*list_it]) {  //Push-relabel(v)
+                    excess_flow = true;
+                    for (ListDigraph::OutArcIt e(g, *list_it); e!=INVALID; ++e) {
+                        if (node_label[g.target(e)] == level_iter - 1 && edge_cap[e] - flow[e] > 0) {
+                            // push
+                            double ex = node_flow[g.target(e)];
+                            double rf = flow[e] - edge_cap[e];
+                            double deg_minus_ex = degree[*list_it] - ex;
+                            double phi = min(ex, min(rf, deg_minus_ex));
+                            flow[e] += phi;
+                            flow[e] -= phi;                         
+                            node_flow[*list_it] -= phi;
+                            node_flow[g.target(e)] += phi;
+                            //don't relabel
+                        }
+                        else {
+                            //Relabel v += 1
+                            node_label[*list_it] += 1;
+                            level_queue[level_iter].erase(list_it);
+                            level_queue[level_iter + 1].push_back(*list_it);
+                        }
+                        goto unit_start;
+                    }
+                }
+            }
+        }
+
+     
+    }
+}
+
+void local_flow(const G &ug, const ListDigraph &g, set<Node> set_A, double phi, int v, int e) {
+
+    struct flow_instance {
+        int v = 0;
+        int e = 0;
+        EdgeMap<double> cross_edge_source(G);
+        EdgeMap<double> edge_cap(G);
+        NodeMap<double> sink_node_cap(G);
+        NodeMap<int> degree(G);
+        NodeMap<bool> cut_map;
+
+        flow_instance(int v, int e, EdgeMap<double> &cross_edge_source(G), EdgeMap<double> &edge_cap(G),
+                      NodeMap<double> &sink_node_cap(G), NodeMap<int> &degree(G), NodeMap<bool> &cut_map(G));
+    };
+
+    // INITIALIZE ALL
+
+    ListDigraph::ArcMap<double> cross_edge_source(g); 
+    ListDigraph::ArcMap<double> edge_cap(g);
+    ListDigraph::ArcMap<double> flow(g);
+    ListDigraph::NodeMap<double> sink_node_cap(g);
+    ListDigraph::NodeMap<int> degree(g);
+    ListDigraph::NodeMap<int> node_label(g);
+    ListDigraph::NodeMap<bool> A(g, false);
+    ListDigraph::NodeMap<double> node_flow(g);
+
+    double h = 1 / (phi * log2(e));
+    vector<list<ListDigraph::Node>> level_queue;
+    for (int i = 0; i < h; i++) {
+        level_queue.push_back(list<ListDigraph::Node>());
+    }
+
+    for (NodeIt i(ug); i!=INVALID; ++i) {
+        ListDigraph::Node n = g.nodeFromId(ug.id(i));
+        if (set_A.count(i)) {
+            A[n] = true;
+            level_queue[0].push_back(n);
+            node_label[n] = 0;
+        }
+        else {
+            A[n] = false;
+        } 
+        node_flow[n] = 0;
+    }
+    for (ListDigraph::ArcIt i(g); i!=INVALID; ++i) {
+        if (A[g.source(i)] && !A[g.target(i)]) {
+            cross_edge_source[i] = 2/phi;
+            edge_cap[i] = 2/phi;
+        }
+        else if (!A[g.source(i)] && A[g.target(i)]) {
+            cross_edge_source[i] = 2/phi;
+            edge_cap[i] = 2/phi;
+        }
+        else {
+            //cross_edge_source[i] = 0;
+            //edge_cap[i] = 0;
+        }
+        degree[g.source(i)] += 1;
+        degree[g.target(i)] += 1;
+        flow[i] = 0;
+    }
+
+    for (ListDigraph::NodeIt i(g); i!=INVALID; ++i) {
+        if (A[i])
+            sink_node_cap[i] = degree[i];
+    }
+    
+    bool found_feasible_routing = false;
+
+    while (!found_feasible_routing) {
+        cout << "Calling unit flow \n";
+        unit_flow(g, h, sink_node_cap,
+                  cross_edge_source,
+                  flow,
+                  node_flow,
+                  degree,
+                  edge_cap,
+                  level_queue,
+                  node_label); 
+
+        if (level_queue[h-1].empty())
+            break;
+
+        int i_ = 0;
+        for (int i = h - 1; i > 0; --i) {
+            for (auto node = level_queue[i].cbegin(); node != level_queue[i].cend(); ++node) {
+                int edges_to_next_level = 0;
+                int edges_to_any_level  = 0;
+                //r (ListDigraph::OutArcIt e(g, *list_it); e!=INVALID; ++e)
+                for (ListDigraph::OutArcIt a(g, *node); a!=INVALID; ++a) {
+                    edges_to_any_level++;
+                    if (node_label[g.target(a)])
+                        edges_to_next_level++;
+                }
+                if (0 < edges_to_next_level <= 5 * edges_to_any_level * log2(e) / h) {
+                    goto level_cut;
+                    i_ = i;
+                }
+            }
+        }
+        break;
+    level_cut:
+        int n_upper_queue_nodes = 0;
+        int n_lower_queue_nodes = 0;
+        for (int j = h - 1; j > i_; --j)
+            n_upper_queue_nodes += level_queue[j].size();
+        for (int j = i_ - 1; j > 0; --j)
+            n_upper_queue_nodes += level_queue[j].size();;
+
+        if (n_upper_queue_nodes < n_lower_queue_nodes)
+            for (int j = i_ - 1; j > 0; --j)
+                level_queue[j].clear();
+        else
+            for (int j = h - 1; j > i_; --j)
+                level_queue[j].clear();
+    }
+
+   set_A.clear();
+   for (int i = h - 1; i > 0; --i) {
+        for (auto node = level_queue[i].cbegin(); node != level_queue[i].cend(); ++node) {
+            set_A.insert(ug.nodeFromId(g.id(*node)));
+        }
+    }
+    return;
+}
+
+
+ListDigraph *digraph_from_graph(G &g, ListDigraph &dg) {
+
+    for(NodeIt n(g); n!=INVALID; ++n)
+        dg.addNode();
+
+    for(EdgeIt a(g); a!=INVALID; ++a) {
+        dg.addArc(dg.nodeFromId(g.id(g.u(a))), dg.nodeFromId(g.id(g.v(a))));
+        dg.addArc(dg.nodeFromId(g.id(g.v(a))), dg.nodeFromId(g.id(g.u(a))));
+    }
+
+
+    return &dg;
+}
+
+
 int main(int argc, char **argv) {
     Configuration config;
     parse_options(argc, argv, config);
@@ -838,6 +1036,8 @@ int main(int argc, char **argv) {
 
     GraphContext gc;
     initGraph(gc, config.input);
+    ListDigraph dg;
+    digraph_from_graph(gc.g, dg);
 
     default_random_engine random_engine = config.seed_randomness
                     ? default_random_engine(config.seed)
@@ -861,15 +1061,31 @@ int main(int argc, char **argv) {
         if(cm.reached_H_target) {
             if(best_round->g_expansion < config.G_phi_target) {
                 cout << "CASE1 NO Goodenough cut, G certified expander." << endl;
+                //for (const auto &n : nodes) {
+                //file << (cut.count(n) ? "1" : "0") << "\n";
             } else {
                 cout << "CASE3 Found goodenough but very unbalanced cut." << endl;
+                local_flow(gc.g, dg, *(best_round->cut), config.G_phi_target, gc.nodes.size(), gc.num_edges);
             }
         } else {
             cout << "CASE2 Goodenough balanced cut" << endl;
+            NodeMap<bool> A_n(gc.g, false);
+            NodeMap<bool> R_n(gc.g, false);
+            EdgeMap<bool> A_e(gc.g, false);
+            EdgeMap<bool> R_e(gc.g, false);
+            SubGraph<ListGraph> A(gc.g, A_n, A_e);
+            SubGraph<ListGraph> R(gc.g, R_n, R_e);
+            CutMatching cm_A(A, config, random_engine);
+            cm.run();
+            CutMatching cm_R(R, config, random_engine);
+            cm.run();
         }
 
     }
 
+    cout << "DEBUG LOCAL FLOW" << "\n";
+    local_flow(gc.g, dg, *(best_round->cut), config.G_phi_target, gc.nodes.size(), gc.num_edges);
+    cout << "FINISHED LOCAL FLOW" << "\n";
     if (OUTPUT_CUT) { write_cut(gc.nodes, *best_cut); }
 
     if (config.compare_partition) {

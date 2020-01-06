@@ -1037,11 +1037,13 @@ map<Node, Node> graph_from_cut(G &g, GraphContext &sg, set<Node> cut, map<Node, 
     set<Node> all_nodes = set<Node>();
     set<Node> complement_nodes = set<Node>();
     sg.num_edges = 0;
+    assert (sg.nodes.size() == 0);
+    
     if (complement == true) {
         for (NodeIt n(g); n!=INVALID; ++n) {
             all_nodes.insert(n);
         }
-        cut.clear();
+        //cut.clear();
         std::set_difference(all_nodes.begin(), all_nodes.end(), cut.begin(), cut.end(),
                 std::inserter(complement_nodes, complement_nodes.end()));
         cut.swap(complement_nodes);
@@ -1059,9 +1061,11 @@ map<Node, Node> graph_from_cut(G &g, GraphContext &sg, set<Node> cut, map<Node, 
     for (const auto &n : cut) {
         for (OutArcIt a(g, n); a!=INVALID; ++a) {
             if (cut.count(g.target(a)) > 0) { //Edge inside cut
-                sg.g.addEdge(reverse_map[g.source(a)], reverse_map[g.target(a)]);
+                assert (sg.g.id(reverse_map[g.source(a)]) < sg.nodes.size() && sg.g.id(reverse_map[g.target(a)]) < sg.nodes.size());
+                sg.g.addEdge(reverse_map[n], reverse_map[g.target(a)]);
                 sg.num_edges++;
             }
+            //Add self-nodes ?
     }   }
 
     return new_map;
@@ -1122,6 +1126,7 @@ vector<set<Node>> decomp(GraphContext &gc, ListDigraph &dg, Configuration config
             GraphContext A;
             cout << "Create map to original graph" << endl;
             map<Node, Node> new_map = graph_from_cut(gc.g, A, *(best_round->cut), map_to_original_graph);
+            assert (A.nodes.size() == (*(best_round->cut)).size());
             cout << "Decomp on A" << endl;
             decomp(A, dg, config, new_map, cuts, node_maps_to_original_graph);
             GraphContext R;

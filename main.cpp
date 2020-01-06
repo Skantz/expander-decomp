@@ -455,17 +455,19 @@ struct CutMatching {
         if (PRINT_PATHS) cout << "Path: " << g.id(u_orig);
         out_path[0] = u_orig;
         Node u = u_orig;
+
         while (true) {
             auto &tup = flow_children[u].back();
             Node v = get<0>(tup);
             --get<1>(tup);
 
-            if (get<1>(tup) == 0) flow_children[u].pop_back();
+            if (get<1>(tup) == 0) {
+                flow_children[u].pop_back();
+            }
 
             if (flow_children[v].empty()) {
                 assert(v == t);
                 assert(u != u_orig);
-
                 out_path[1] = u;
                 if (PRINT_PATHS) cout << endl;
                 break;
@@ -483,6 +485,7 @@ struct CutMatching {
         out_paths.reserve(countNodes(mg.g) / 2);
 
         // Calc flow children (one pass)
+        cout << "First edge it" << endl;
         ArcLookup alp(mg.g);
         for (EdgeIt e(mg.g); e != INVALID; ++e) {
             Node u = mg.g.u(e);
@@ -498,10 +501,10 @@ struct CutMatching {
         for (IncEdgeIt e(mg.g, mg.s); e != INVALID; ++e) {
             assert(mg.g.u(e) == mg.s || mg.g.v(e) == mg.s);
             Node u = mg.g.u(e) == mg.s ? mg.g.v(e) : mg.g.u(e);
-
             out_paths.push_back(array<Node, 2>());
             extract_path_fast(mg.g, f, flow_children, u, mg.t, out_paths[out_paths.size() - 1]);
         }
+
     }
 
     MatchResult bin_search_flows(MatchingContext &mg, unique_ptr<FlowAlgo> &p) const {
@@ -647,10 +650,11 @@ struct CutMatching {
 
         unique_ptr<FlowAlgo> p;
         MatchResult mr = bin_search_flows(mg, p);
-
+        cout << "Bin search flows done" << endl;
         vector<array<Node, 2>> paths;
         decompose_paths(mg, p, paths);
 
+        cout << "Adding paths" << endl;
         for (auto &path : paths) {
             m_out.addEdge(path[0], path.back());
         }
@@ -1023,13 +1027,116 @@ ListDigraph *digraph_from_graph(G &g, ListDigraph &dg) {
         dg.addArc(dg.nodeFromId(g.id(g.v(a))), dg.nodeFromId(g.id(g.u(a))));
     }
 
-
     return &dg;
 }
 
 
+map<Node, Node> graph_from_cut(G &g, GraphContext &sg, set<Node> cut, map<Node, Node> old_map, bool complement=false) {
+    map<Node, Node> new_map = map<Node, Node>();
+    map<Node, Node> reverse_map = map<Node, Node>();
+    set<Node> all_nodes = set<Node>();
+    set<Node> complement_nodes = set<Node>();
+    sg.num_edges = 0;
+    if (complement == true) {
+        for (NodeIt n(g); n!=INVALID; ++n) {
+            all_nodes.insert(n);
+        }
+        cut.clear();
+        std::set_difference(all_nodes.begin(), all_nodes.end(), cut.begin(), cut.end(),
+                std::inserter(complement_nodes, complement_nodes.end()));
+        cut.swap(complement_nodes);
+    }
+
+    for (auto n : cut) {
+        Node x = sg.g.addNode();
+        sg.nodes.push_back(x);
+        //Maybe not necessary
+        new_map[x] = old_map[n];
+        reverse_map[n] = x;
+    }
+    //sort(sg.nodes.begin(), sg.nodes.end());
+
+    for (const auto &n : cut) {
+        for (OutArcIt a(g, n); a!=INVALID; ++a) {
+            if (cut.count(g.target(a)) > 0) { //Edge inside cut
+                sg.g.addEdge(reverse_map[g.source(a)], reverse_map[g.target(a)]);
+                sg.num_edges++;
+            }
+    }   }
+
+    return new_map;
+}
+
+
+vector<set<Node>> decomp(GraphContext &gc, ListDigraph &dg, Configuration config, map<Node, Node> map_to_original_graph, vector<set<Node>> cuts, vector<map<Node, Node>> node_maps_to_original_graph) {
+
+    Node temp_node;
+    bool added_node = false;
+    if (gc.nodes.size() % 2 != 0) {
+        added_node = true;
+        temp_node = gc.g.addNode();
+        gc.g.addEdge(gc.nodes[0], temp_node);
+        gc.nodes.push_back(temp_node);
+        gc.num_edges++;
+    }
+
+    cout << "init cut-matching" << endl;
+    default_random_engine random_engine = config.seed_randomness
+                    ? default_random_engine(config.seed)
+                    : default_random_engine(random_device()());
+    CutMatching cm(gc, config, random_engine);
+    cout << "Start cut-matching" << endl;
+    cm.run();
+    cout << "Finish cut-matching" << endl;
+    assert(!cm.past_rounds.empty());
+    auto& best_round = *max_element(cm.past_rounds.begin(), cm.past_rounds.end(), [](auto &a, auto &b) {
+        return a->g_expansion < b->g_expansion;
+    });
+
+    if (added_node) {
+        (*(best_round->cut)).erase(temp_node);
+        gc.g.erase(temp_node);
+    }
+    
+    cout << "The best with highest expansion was found on round" << best_round->index << endl;
+    cout << "Best cut sparsity: " << endl;
+    auto &best_cut = best_round->cut;
+    CutStats<G>(gc.g, gc.nodes.size(), *best_cut).print();
+
+    if(config.use_H_phi_target && config.use_G_phi_target && config.use_volume_treshold) {
+        if(cm.reached_H_target) {
+            if(best_round->g_expansion < config.G_phi_target) {
+                cout << "CASE1 NO Goodenough cut, G certified expander." << endl;
+                cuts.push_back(*(best_round->cut));
+            } else {
+                ListDigraph dg_;
+                digraph_from_graph(gc.g, dg_);
+                local_flow(gc.g, dg_, *(best_round->cut), config.G_phi_target, gc.nodes.size(), gc.num_edges);
+                cuts.push_back(*best_round->cut);
+                GraphContext V_over_A;
+                map_to_original_graph = graph_from_cut(gc.g, V_over_A, *(best_round->cut), map_to_original_graph, true);
+                decomp(V_over_A, dg, config, map_to_original_graph, cuts, node_maps_to_original_graph);
+            }
+        } else {
+            cout << "CASE2 Goodenough balanced cut" << endl;
+            GraphContext A;
+            cout << "Create map to original graph" << endl;
+            map<Node, Node> new_map = graph_from_cut(gc.g, A, *(best_round->cut), map_to_original_graph);
+            cout << "Decomp on A" << endl;
+            decomp(A, dg, config, new_map, cuts, node_maps_to_original_graph);
+            GraphContext R;
+            cout << "(R) create map to original graph" << endl;
+            new_map = graph_from_cut(gc.g, R, *(best_round->cut), map_to_original_graph, true);
+            cout << "Decomp on R" << endl;
+            decomp(R, dg, config, new_map, cuts, node_maps_to_original_graph);
+        }
+    }
+    return cuts;
+}
+
 int main(int argc, char **argv) {
-    Configuration config;
+
+    Configuration config = Configuration();
     parse_options(argc, argv, config);
 
     if(config.show_help_and_exit) return 0;
@@ -1038,6 +1145,17 @@ int main(int argc, char **argv) {
     initGraph(gc, config.input);
     ListDigraph dg;
     digraph_from_graph(gc.g, dg);
+
+    map<Node, Node> map_to_original_graph;
+    for (NodeIt n(gc.g); n!=INVALID; ++n)
+        map_to_original_graph[n] = n;
+
+    vector<set<Node>> cuts = vector<set<Node>>();
+    vector<map<Node, Node>> node_maps_to_original_graph = vector<map<Node, Node>>();
+
+    decomp(gc, dg, config, map_to_original_graph, cuts, node_maps_to_original_graph);
+
+    return 0;
 
     default_random_engine random_engine = config.seed_randomness
                     ? default_random_engine(config.seed)
@@ -1069,16 +1187,7 @@ int main(int argc, char **argv) {
             }
         } else {
             cout << "CASE2 Goodenough balanced cut" << endl;
-            NodeMap<bool> A_n(gc.g, false);
-            NodeMap<bool> R_n(gc.g, false);
-            EdgeMap<bool> A_e(gc.g, false);
-            EdgeMap<bool> R_e(gc.g, false);
-            SubGraph<ListGraph> A(gc.g, A_n, A_e);
-            SubGraph<ListGraph> R(gc.g, R_n, R_e);
-            CutMatching cm_A(A, config, random_engine);
-            cm.run();
-            CutMatching cm_R(R, config, random_engine);
-            cm.run();
+
         }
 
     }

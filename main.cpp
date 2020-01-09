@@ -1159,10 +1159,12 @@ map<Node, Node> connected_subgraph_from_graph(const ListGraph &g, GraphContext &
 }
 
 
-tuple<vector<set<Node>>,vector<map<Node, Node>>> decomp(GraphContext &gc, ListDigraph &dg, Configuration config, map<Node, Node> map_to_original_graph, vector<set<Node>> cuts, vector<map<Node, Node>> node_maps_to_original_graph) {
+vector<map<Node, Node>> decomp(GraphContext &gc, ListDigraph &dg, Configuration config, map<Node, Node> map_to_original_graph, vector<set<Node>> cuts, vector<map<Node, Node>> node_maps_to_original_graph) {
 
-    if (gc.nodes.size() == 1)
-        return tuple(cuts, node_maps_to_original_graph);
+    if (gc.nodes.size() == 1) {
+        node_maps_to_original_graph.push_back(map_to_original_graph);
+        return node_maps_to_original_graph;
+    }
 
     Node temp_node;
     bool added_node = false;
@@ -1201,6 +1203,7 @@ tuple<vector<set<Node>>,vector<map<Node, Node>>> decomp(GraphContext &gc, ListDi
         if(cm.reached_H_target) {
             if(best_round->g_expansion < config.G_phi_target) {
                 cout << "CASE1 NO Goodenough cut, G certified expander." << endl;
+                node_maps_to_original_graph.push_back(map_to_original_graph);
                 cuts.push_back(*(best_round->cut));
             } else {
                 ListDigraph dg_;
@@ -1209,6 +1212,7 @@ tuple<vector<set<Node>>,vector<map<Node, Node>>> decomp(GraphContext &gc, ListDi
                 cuts.push_back(*best_round->cut);
                 GraphContext V_over_A;
                 map<Node, Node> new_map = graph_from_cut(gc.g, V_over_A, *(best_round->cut), map_to_original_graph, true);
+                node_maps_to_original_graph.push_back(new_map);
                 map <Node, Node> new_map_;
                 NodeIt n(V_over_A.g);
                 while (n != INVALID) {
@@ -1216,7 +1220,7 @@ tuple<vector<set<Node>>,vector<map<Node, Node>>> decomp(GraphContext &gc, ListDi
                     new_map_ = connected_subgraph_from_graph(V_over_A.g, V_over_A_, new_map, n);
                     cout << "Number of nodes is: " << V_over_A_.nodes.size() << " number of edges: " << V_over_A_.num_edges << endl;
                     assert(V_over_A_.num_edges > (V_over_A_.nodes.size() - 2));
-                    decomp(V_over_A_, dg, config, new_map_, cuts, node_maps_to_original_graph);
+                    node_maps_to_original_graph = decomp(V_over_A_, dg, config, new_map_, cuts, node_maps_to_original_graph);
                 }
                 //decomp(V_over_A, dg, config, map_to_original_graph, cuts, node_maps_to_original_graph);
             }
@@ -1235,7 +1239,7 @@ tuple<vector<set<Node>>,vector<map<Node, Node>>> decomp(GraphContext &gc, ListDi
                 new_map_ = connected_subgraph_from_graph(A.g, A_, new_map, n);
                 cout << "Number of nodes is: " << A_.nodes.size() << " number of edges: " << A_.num_edges << endl;
                 assert(A_.num_edges >= (A_.nodes.size() - 1));
-                decomp(A_, dg, config, new_map_, cuts, node_maps_to_original_graph);
+                node_maps_to_original_graph = decomp(A_, dg, config, new_map_, cuts, node_maps_to_original_graph);
             }
             GraphContext R;
             cout << "(R) create map to original graph" << endl;
@@ -1245,12 +1249,12 @@ tuple<vector<set<Node>>,vector<map<Node, Node>>> decomp(GraphContext &gc, ListDi
             while (n_ != INVALID) {
                 GraphContext R_;
                 new_map_ = connected_subgraph_from_graph(R.g, R_, new_map, n_);
-                decomp(R_, dg, config, new_map_, cuts, node_maps_to_original_graph);
+                node_maps_to_original_graph = decomp(R_, dg, config, new_map_, cuts, node_maps_to_original_graph);
             }
             //decomp(R, dg, config, new_map, cuts, node_maps_to_original_graph);
         }
     }
-    return tuple(cuts, node_maps_to_original_graph);
+    return node_maps_to_original_graph;
 }
 
 
@@ -1294,8 +1298,16 @@ int main(int argc, char **argv) {
     vector<set<Node>> cuts = vector<set<Node>>();
     vector<map<Node, Node>> node_maps_to_original_graph = vector<map<Node, Node>>();
 
-    decomp(gc, dg, config, map_to_original_graph, cuts, node_maps_to_original_graph);
+    vector<map<Node, Node>> cut_maps = decomp(gc, dg, config, map_to_original_graph, cuts, node_maps_to_original_graph);
 
+    cout << "Done decomp" << endl;
+    for (const auto &m : cut_maps) {
+        for (const auto &c : m) {
+            cout << gc.g.id(c.second) << " ";
+        }
+        cout << endl;
+    } 
+    
     return 0;
 
     default_random_engine random_engine = config.seed_randomness

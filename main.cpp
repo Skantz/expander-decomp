@@ -108,7 +108,7 @@ struct Configuration {
     double G_phi_target = 0;
     // we only break if we find a good enough cut that is also this balanced (has this minside volume)
     bool use_volume_treshold = false;
-    double volume_treshold_factor = 0;
+    double volume_treshold_factor = 1;
 };
 
 
@@ -782,7 +782,7 @@ cxxopts::Options create_options() {
             ("G_phi", "Phi expansion target for the G graph. Means \"what is a good enough cut?\" Recommended with -r=0. This is the PHI from the paper. ",
              cxxopts::value<double>()->implicit_value("0.8"))
             ("vol", "Volume treshold. Only used if G_phi is used. Will be multiplied by number of edges, so to require e.g. minimum 10% volume, write 0.1.",
-             cxxopts::value<double>()->implicit_value("0.1"))
+             cxxopts::value<double>()->implicit_value("1"))
             ("f,file", "File to read graph from", cxxopts::value<std::string>())
             ("r,max-rounds", "Number of rounds after which to stop (0 for no limit)", cxxopts::value<long>()->default_value("25"))
             ("s,seed", "Use a seed for RNG (optionally set seed manually)",
@@ -1066,16 +1066,20 @@ map<Node, Node> graph_from_cut(G &g, GraphContext &sg, set<Node> cut, map<Node, 
     }
     //sort(sg.nodes.begin(), sg.nodes.end());
 
+    int sum_all_edges = 0;
     for (const auto &n : cut) {
-        for (OutArcIt a(g, n); a!=INVALID; ++a) {
-            if (cut.count(g.target(a)) > 0 && reverse_map[n] < reverse_map[g.target(a)]) { //Edge inside cut
+        for (IncEdgeIt a(g, n); a!=INVALID; ++a) {
+            if (cut.count(g.target(a)) > 0 && cut.count(g.source(a)) > 0)
+                sum_all_edges++;
+            if (cut.count(g.target(a)) > 0 && cut.count(g.source(a)) > 0  && reverse_map[g.source(a)] < reverse_map[g.target(a)]) { //Edge inside cut
                 assert (reverse_map[n] != reverse_map[g.target(a)]);
                 assert (sg.g.id(reverse_map[g.source(a)]) < sg.nodes.size() && sg.g.id(reverse_map[g.target(a)]) < sg.nodes.size());
-                sg.g.addEdge(reverse_map[n], reverse_map[g.target(a)]);
+                sg.g.addEdge(reverse_map[g.source(a)], reverse_map[g.target(a)]);
                 sg.num_edges++;
             }
             //Add self-nodes ?
     }   }
+    assert (sum_all_edges / 2 == sg.num_edges);
 
     return new_map;
 }
@@ -1124,14 +1128,18 @@ map<Node, Node> connected_subgraph_from_graph(const ListGraph &g, GraphContext &
 
     Bfs<ListGraph> bfs(g);
     bfs.init();
-    //bfs.addSource(v);
-    //bfs.start();
-    bfs.run(it);
+    bfs.addSource(it);
+    bfs.start(); 
+    //bfs.run(it);
     map<Node, Node> reverse_map;
     map<Node, Node> forward_map;
     map<Node, Node> map_to_orig;
-
-    while (it!= INVALID) {
+    reverse_map.clear(); forward_map.clear(); map_to_orig.clear();
+    sg.num_edges = 0;
+    assert (bfs.reached(it) && bfs.dist(it) == 0);
+    cout << "Starting on node: " << g.id(it) << endl;
+    while (it!= INVALID && bfs.reached(it)) {
+        assert (!(bfs.reached(it) && it == INVALID));
         Node x = sg.g.addNode();
         sg.nodes.push_back(x);
         reverse_map[x] = it;
@@ -1139,21 +1147,37 @@ map<Node, Node> connected_subgraph_from_graph(const ListGraph &g, GraphContext &
         map_to_orig[x] = map_to_original_graph[it];
         ++it;
         if (it == INVALID)
+            { cout << "Break on invalid IT" << endl; break; }
+        else if(!bfs.reached(it)) {
+            cout << "Not connected - creating subgraph on node " << g.id(it) << endl;
             break;
-        if(!bfs.reached(it)) {
-            cout << "Not connected - creating subgraph" << endl;
-            break;
-    }   }
+        }
+        assert(bfs.dist(it) > 0);
+        cout << "Dist to added node " << g.id(it) << " is: " << bfs.dist(it) << endl;
+    }
+    cout << "this should print";
+    cout << "Distance from source to unreachable: " << bfs.dist(it);
+    int sum_all_edges = 0;
 
     for (NodeIt n(sg.g); n != INVALID; ++n) {
-        cout << "Working on node: " << sg.g.id(n) << endl;
-        for (OutArcIt e(g, reverse_map[n]); e!= INVALID; ++e) {
-            cout << "Arc it" << endl;
-            if (g.id(g.target(e)) > g.id(g.source(e)) && forward_map.count(g.source(e)) > 0 && forward_map.count(g.target(e)) > 0 ) {
-                cout << "Adding edge between " << sg.g.id(forward_map[g.u(e)]) << " and " << sg.g.id(forward_map[g.v(e)]) << endl;
-                sg.g.addEdge(forward_map[g.source(e)], forward_map[g.target(e)]);
-                sg.num_edges++;
+        //cout << "Distance from source to working node:  " << bfs.dist(reverse_map[n]) << endl; 
+        //cout << "Working on node: " << sg.g.id(n) << endl;
+        assert (reverse_map.count(n) == 1);
+        //assert (forward_map.count(n) == 1);
+        for (IncEdgeIt e(g, reverse_map[n]); e!= INVALID; ++e) {
+            if (forward_map.count(g.source(e)) > 0 && forward_map.count(g.target(e)) > 0 ) 
+                sum_all_edges++;
+            if (forward_map.count(g.source(e)) > 0 && forward_map.count(g.target(e)) > 0) { // && g.id(g.source(e)) <= g.id(g.target(e)))  {
+                //cout << "Adding edge between " << sg.g.id(forward_map[g.source(e)]) << " and " << sg.g.id(forward_map[g.target(e)]) << endl;
+                assert (sg.g.id(forward_map[g.source(e)]) < sg.nodes.size() && sg.g.id(forward_map[g.target(e)]) < sg.nodes.size());
+                if (findEdge(sg.g, forward_map[g.target(e)], forward_map[g.source(e)]) == INVALID) {
+                    sg.g.addEdge(forward_map[g.source(e)], forward_map[g.target(e)]);
+                    sg.num_edges++;
+                }
     }   }   }
+
+    assert (sg.nodes.size() >= 1);
+    assert (sg.nodes.size() <= 1 || connected(sg.g));
 
     return map_to_orig;
 }
@@ -1167,11 +1191,12 @@ vector<map<Node, Node>> decomp(GraphContext &gc, ListDigraph &dg, Configuration 
     }
 
     Node temp_node;
+    Edge temp_edge;
     bool added_node = false;
     if (gc.nodes.size() % 2 != 0) {
         added_node = true;
         temp_node = gc.g.addNode();
-        gc.g.addEdge(gc.nodes[0], temp_node);
+        temp_edge = gc.g.addEdge(gc.nodes[gc.nodes.size() - 2], temp_node);
         gc.nodes.push_back(temp_node);
         gc.num_edges++;
     }
@@ -1191,7 +1216,10 @@ vector<map<Node, Node>> decomp(GraphContext &gc, ListDigraph &dg, Configuration 
 
     if (added_node) {
         (*(best_round->cut)).erase(temp_node);
+        gc.g.erase(temp_edge);
         gc.g.erase(temp_node);
+        gc.nodes.pop_back();
+        gc.num_edges--;
     }
     
     cout << "The best with highest expansion was found on round" << best_round->index << endl;
@@ -1234,13 +1262,19 @@ vector<map<Node, Node>> decomp(GraphContext &gc, ListDigraph &dg, Configuration 
  
             map <Node, Node> new_map_;
             NodeIt n(A.g);
+            int sum_subgraph_nodes = 0;
+            int sum_subgraph_edges = 0;
             while (n != INVALID) {
-                GraphContext A_;
+                GraphContext A_; 
                 new_map_ = connected_subgraph_from_graph(A.g, A_, new_map, n);
                 cout << "Number of nodes is: " << A_.nodes.size() << " number of edges: " << A_.num_edges << endl;
                 assert(A_.num_edges >= (A_.nodes.size() - 1));
+                sum_subgraph_nodes = sum_subgraph_nodes + A_.nodes.size();
+                sum_subgraph_edges = sum_subgraph_edges + A_.num_edges;
                 node_maps_to_original_graph = decomp(A_, dg, config, new_map_, cuts, node_maps_to_original_graph);
             }
+            assert (sum_subgraph_nodes == A.nodes.size());
+    
             GraphContext R;
             cout << "(R) create map to original graph" << endl;
             new_map = graph_from_cut(gc.g, R, *(best_round->cut), map_to_original_graph, true);
@@ -1249,6 +1283,7 @@ vector<map<Node, Node>> decomp(GraphContext &gc, ListDigraph &dg, Configuration 
             while (n_ != INVALID) {
                 GraphContext R_;
                 new_map_ = connected_subgraph_from_graph(R.g, R_, new_map, n_);
+                assert(R_.num_edges >= (R_.nodes.size() - 1));
                 node_maps_to_original_graph = decomp(R_, dg, config, new_map_, cuts, node_maps_to_original_graph);
             }
             //decomp(R, dg, config, new_map, cuts, node_maps_to_original_graph);
@@ -1307,6 +1342,21 @@ int main(int argc, char **argv) {
         }
         cout << endl;
     } 
+
+    ofstream file;
+    file.open("cut.txt");
+    if (!file) {
+        cout << "Cannot open file " << OUTPUT_FILE << endl;
+        return 1;
+    }
+
+    for (const auto &m : cut_maps) {
+        for (const auto &c : m) {
+            file << gc.g.id(c.second) << " ";
+        }
+        file << endl;
+    }
+    file.close();
     
     return 0;
 

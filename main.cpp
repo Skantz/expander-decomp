@@ -149,7 +149,7 @@ struct RoundReport {
     size_t index;
     size_t capacity_required_for_full_flow;
     double multi_h_expansion;
-    double g_expansion;
+    double g_conductance;
     long volume;
     bool relatively_balanced;
     Cutp cut;
@@ -179,10 +179,14 @@ public:
     }
 
     void initialize(const G &g, size_t num_vertices, const Cut &cut) {
+        cut_volume = 0;
+        crossing_edges = 0;
         for (EdgeIt e(g); e != INVALID; ++e) {
             ++num_edges;
             if (is_crossing(g, cut, e)) crossing_edges += 1;
-            if (any_in_cut(g, cut, e)) cut_volume += 1;
+            //if (any_in_cut(g, cut, e)) cut_volume += 1;
+            if (cut.count(g.u(e))) cut_volume += 1;
+            if (cut.count(g.v(e))) cut_volume += 1;
         }
 
         assert(cut.size() <= num_vertices);
@@ -228,12 +232,20 @@ public:
         return min_side == 0 ? 0 : crossing_edges * 1. / min_side;
     }
 
+    double conductance() {
+        return min_side == 0 ? 0 : crossing_edges * 1. / minside_volume();
+    }
+
     void print() {
         cout << "Edge crossings (E) : " << crossing_edges << endl;
         cout << "cut size: (" << min_side << " | " << max_side << ")" << endl
              << "diff: " << diff() << " (" << imbalance() << " of total n vertices)" << endl;
         cout << "Min side: " << min_side << endl;
-        cout << "E/min(|S|, |comp(S)|) = " << expansion() << endl;
+        //cout << "E/min(|S|, |comp(S)|) = " << expansion() << endl;
+        cout << "expansion: " << expansion() << endl;
+        cout << "conductance: " << expansion() << endl;
+        cout << "cut volume: " << cut_volume << endl;
+        cout << "noncut volume: " << noncut_volume() << endl;
     }
 };
 // Reads the file filename,
@@ -433,7 +445,8 @@ void createSubdividedGraph(SubdividedGraphContext& sgc) {
     }
     vector<Edge> edges;
     for (EdgeIt e(g); e != INVALID; ++e) {
-        edges.push_back(e);
+        if (g.u(e) != g.v(e))
+            edges.push_back(e);
     }
 
     for (NodeIt n(g); n != INVALID; ++n) {
@@ -686,10 +699,13 @@ struct CutMatching {
         typename GG::template NodeMap<double> probs(g);
         vector<Node> all_nodes;
 
-        uniform_int_distribution<int> uniform_dist(0, 1);
+        //uniform_int_distribution<int> uniform_dist(0, 1);
         for (typename GG::NodeIt n(g); n != INVALID; ++n) {
             all_nodes.push_back(n);
-            probs[n] = uniform_dist(random_engine)
+        }
+            uniform_int_distribution<int> uniform_dist(0, 1);
+            for (typename GG::NodeIt n(g); n != INVALID; ++n) {
+                probs[n] = uniform_dist(random_engine)
                        ? 1.0 / all_nodes.size()
                        : -1.0 / all_nodes.size();
         }
@@ -851,8 +867,13 @@ struct CutMatching {
             //}
         }
         auto cs = CutStats<G>(sgc.origContext.g, sgc.origContext.nodes.size(), *report->cut);
-        report->g_expansion = cs.expansion();
-        l.progress() << "SUBG cut expansion " << report->g_expansion << endl;
+        //report->g_expansion = cs.expansion();
+        //l.progress() << "SUBG cut expansion " << report->g_expansion << endl;
+        report->g_conductance = cs.conductance();
+        if(report->g_conductance == 1) {
+            cout << "LYING" << endl;
+        }
+        l.progress() << "SUBG cut conductance: " << report->g_conductance << endl;
         report->volume = cs.minside_volume();
         l.progress() << "SUBG cut minside volume " << cs.minside_volume() << endl;
         l.progress() << "SUBG cut maxside volume " << cs.maxside_volume() << endl;
@@ -904,32 +925,25 @@ struct CutMatching {
 
         const auto& last_round = sub_past_rounds[sub_past_rounds.size() - 1];
 
-        if (config.use_volume_treshold && !(last_round->relatively_balanced)) {
-            cout << "unbalanced cut" << endl;
+        if (config.use_volume_treshold && (last_round->relatively_balanced)) {
+            cout << "balanced cut" << endl;
             return true;
         }
-        if(config.use_H_phi_target && last_round->multi_h_expansion >= config.H_phi_target) {
+        if(last_round->multi_h_expansion >= config.H_phi_target) {
             cout << "H Expansion target reached, this will be case 1 or 3. According to theory, this means we probably won't find a better cut. That is, assuming you set H_phi right. "
                     "If was used together with G_phi target, this also certifies the input graph is a G_phi expander unless there was a very unbaanced cut somewhere, which we will proceed to look for." << endl;
             reached_H_target = true;
             return true;
         }
 
-        if(config.use_G_phi_target)
-            if(last_round->g_expansion < config.G_phi_target) {
-                if(config.use_volume_treshold && last_round->relatively_balanced) {
-                    cout << "CASE2 G Expansion target reached with a cut that is relatively balanced. Cut-matching game has found a balanced cut as good as you wanted it."
-                         << endl;
-                    return true;
-                }
-
-
-                if(!config.use_volume_treshold) {
-                    cout << "G Expansion target reached. Cut-matching game has found a cut as good as you wanted it. Whether it is balanced or not is up to you."
-                         << endl;
-                    return true;
-                }
+        if(last_round->g_conductance >= config.G_phi_target) {
+            if(last_round->relatively_balanced) {
+                cout << "CASE2 G Expansion target reached with a cut that is relatively balanced. Cut-matching game has found a balanced cut as good as you wanted it."
+                     << endl;
+                return true;
             }
+
+        }
     return false;
     }
 
@@ -1260,20 +1274,20 @@ map<Node, Node> graph_from_cut(GraphContext &g, GraphContext &sg, set<Node> cut,
         for (IncEdgeIt a(g.g, n); a!=INVALID; ++a) {
             if (cut.count(g.g.target(a)) > 0 && cut.count(g.g.source(a)) > 0)
                 sum_all_edges++;
-            if (cut.count(g.g.target(a)) > 0 && cut.count(g.g.source(a)) > 0  && reverse_map[g.g.source(a)] < reverse_map[g.g.target(a)]) { //Edge inside cut
-                assert (reverse_map[n] != reverse_map[g.g.target(a)]);
+            if (cut.count(g.g.target(a)) > 0 && cut.count(g.g.source(a)) > 0  && findEdge(sg.g, reverse_map[g.g.source(a)], reverse_map[g.g.target(a)]) == INVALID) { //Edge inside cut
+                assert (reverse_map[n] != reverse_map[g.g.target(a)]); // no self -loop
                 assert (sg.g.id(reverse_map[g.g.source(a)]) < sg.nodes.size() && sg.g.id(reverse_map[g.g.target(a)]) < sg.nodes.size());
                 sg.g.addEdge(reverse_map[g.g.source(a)], reverse_map[g.g.target(a)]);
                 sg.num_edges++;
             }
             //Add self-loops ?
-            else if (cut.count(g.g.target(a)) == 0 && cut.count(g.g.source(a)) > 0) { 
-                sg.g.addEdge(reverse_map[g.g.source(a)], reverse_map[g.g.source(a)]);
-                sg.num_edges++;
-            }
+            //else if (cut.count(g.g.target(a)) == 0 && cut.count(g.g.source(a)) > 0 && findEdge(sg.g, reverse_map[g.g.source(a)], reverse_map[g.g.target(a)]) == INVALID) { 
+            //    sg.g.addEdge(reverse_map[g.g.source(a)], reverse_map[g.g.source(a)]);
+            //    sg.num_edges++;
+            //}
     }   }
+    cout << "after decomp on cut with e: " << sum_all_edges << " retains: " << sg.num_edges << endl;
     //assert (sum_all_edges / 2 == sg.num_edges);
-
     return new_map;
 }
 
@@ -1335,11 +1349,11 @@ vector<set<Node>> find_connected_components(GraphContext &g) {
         while (!bfs.emptyQueue() && y != INVALID) {
             //cout << "working on node: " << g.g.id(y) << endl;
             if (!visited_nodes[y]) {
-            //y = bfs.nextNode();
-            //assert (y != source);
-            labels[cc].insert(y);
-            visited_nodes[y] = true;
-            n_visited++;
+                //y = bfs.nextNode();
+                //assert (y != source);
+                labels[cc].insert(y);
+                visited_nodes[y] = true;
+                n_visited++;
             }
             y = bfs.processNextNode();
             //assert(visited_nodes[y] == false); 
@@ -1368,14 +1382,38 @@ vector<map<Node, Node>> decomp(GraphContext &gc, ListDigraph &dg, Configuration 
         node_maps_to_original_graph.push_back(map_to_original_graph);
         return node_maps_to_original_graph;
     }
+
+    if (!(connected(gc.g))) {
+        vector<set<Node>> labels = find_connected_components(gc);
+        int node_cnt = 0; 
+        for (auto& sg_cut : labels) {
+            cout << "decomp on component: n: " << sg_cut.size() << endl;
+            for (auto& n : sg_cut)
+                cout << gc.g.id(map_to_original_graph[n]) << " ";
+            cout << endl;
+            GraphContext sg;
+            map<Node, Node> comp_map = graph_from_cut(gc, sg, sg_cut, map_to_original_graph);
+            vector<map<Node, Node>> decomp_map;
+            vector<map<Node, Node>> empty_map;
+            decomp_map = decomp(sg, dg, config, comp_map, cuts, empty_map);
+            node_maps_to_original_graph.insert(node_maps_to_original_graph.end(), decomp_map.begin(), decomp_map.end());
+            node_cnt = node_cnt + sg.nodes.size();
+        }
+        return node_maps_to_original_graph;
+    }
+
+    assert (connected(gc.g));
+
     //Q: check expansion
     if (gc.nodes.size() == 2) {
         map<Node, Node> map_1 = {{gc.g.nodeFromId(0), map_to_original_graph[gc.g.nodeFromId(0)]}};
-        map<Node, Node> map_2 = {{gc.g.nodeFromId(0), map_to_original_graph[gc.g.nodeFromId(0)]}};
+        map<Node, Node> map_2 = {{gc.g.nodeFromId(1), map_to_original_graph[gc.g.nodeFromId(1)]}};
         node_maps_to_original_graph.push_back(map_1);
         node_maps_to_original_graph.push_back(map_2);
         return node_maps_to_original_graph;
     }
+ 
+    //cout << "con-check, n: " << gc.nodes.size() << " e: " << gc.num_edges << endl;
 
     Node temp_node;
     Edge temp_edge;
@@ -1388,6 +1426,11 @@ vector<map<Node, Node>> decomp(GraphContext &gc, ListDigraph &dg, Configuration 
         gc.num_edges++;
     }
 
+
+    for (EdgeIt e(gc.g); e != INVALID; ++e) {
+        assert (gc.g.u(e) != gc.g.v(e));
+    }
+
     cout << "init cut-matching" << endl;
     default_random_engine random_engine = config.seed_randomness
                     ? default_random_engine(config.seed)
@@ -1398,7 +1441,7 @@ vector<map<Node, Node>> decomp(GraphContext &gc, ListDigraph &dg, Configuration 
     cout << "Finish cut-matching" << endl;
     assert(!cm.sub_past_rounds.empty());
     auto& best_round = *max_element(cm.sub_past_rounds.begin(), cm.sub_past_rounds.end(), [](auto &a, auto &b) {
-        return a->g_expansion < b->g_expansion;
+        return a->g_conductance < b->g_conductance;
     });
 
     if (added_node) {
@@ -1414,115 +1457,75 @@ vector<map<Node, Node>> decomp(GraphContext &gc, ListDigraph &dg, Configuration 
     auto &best_cut = best_round->cut;
     CutStats<G>(gc.g, gc.nodes.size(), *best_cut).print();
 
-    if (true) {
+    //Cut being the largest
+    set<Node> full;
+    set<Node> cut_complement;
+    //bool cmp(const G &g, const Node& n1, const Node& n2)
+    //  { return g.id(n1) < rhs.width; }
+
+    for (int i = 0; i < gc.nodes.size() ; i++) {
+       full.insert(gc.g.nodeFromId(i));   
+    }
+    //Cut on small side
+    if ((*(best_round->cut)).size() < gc.nodes.size()/2) {
+           set_difference(full.begin(), full.end(), (*(best_round->cut)).begin(), (*(best_round->cut)).end(),
+           inserter(cut_complement, cut_complement.begin()));
+           (*(best_round->cut)) = cut_complement;
+    }
         if(cm.reached_H_target) {
-            if(best_round->g_expansion >= config.G_phi_target) {
+            if(best_round->g_conductance >= config.G_phi_target) {
                 cout << "CASE1 NO Goodenough cut, G certified expander." << endl;
                 node_maps_to_original_graph.push_back(map_to_original_graph);
 
             } else {
+                assert (!(best_round->relatively_balanced));
                 ListDigraph dg_;
                 digraph_from_graph(gc.g, dg_);
-                cout << "Call local flow with cut of size: " << (*(best_round->cut)).size() << endl;
-                *(best_round->cut) = local_flow(gc.g, dg_, config, *(best_round->cut), config.G_phi_target, gc.nodes.size(), gc.num_edges);
-                cout << "After local flow, cut is reduced to n nodes: " << (*(best_round->cut)).size() << endl;
                 assert (((*(best_round->cut)).size()) != 0);
-                
-                GraphContext V_over_A;
-                map<Node, Node> new_map = graph_from_cut(gc, V_over_A, (*best_round->cut), map_to_original_graph, true);
-                assert (V_over_A.nodes.size() > 0);
-                node_maps_to_original_graph.push_back(new_map);
-                map <Node, Node> new_map_;
-
-                vector<set<Node>> labels = find_connected_components(V_over_A);
-                int node_cnt = 0;
-                for (auto& sg_cut : labels) {
-                    cout << "decomp on cc (CM)" << endl;
-                    GraphContext sg;
-                    map<Node, Node> new_new_map = graph_from_cut(V_over_A, sg, sg_cut, new_map);
-                    vector<map<Node, Node>> decomp_map;
-                    vector<map<Node, Node>> empty_map;
-                    decomp_map = decomp(sg, dg, config, new_new_map, cuts, empty_map);
-                    node_maps_to_original_graph.insert(node_maps_to_original_graph.end(), decomp_map.begin(), decomp_map.end());
-                    node_cnt = node_cnt + sg.nodes.size();
-                }
-                assert (node_cnt + V_over_A.nodes.size() == (*(best_round->cut)).size());
-            }
-        } else {
-
-            if (!(best_round->relatively_balanced)) {
-                ListDigraph dg_;
-                digraph_from_graph(gc.g, dg_);
                 cout << "Call local flow with cut of size: " << (*(best_round->cut)).size() << endl;
                 *(best_round->cut) = local_flow(gc.g, dg_, config, *(best_round->cut), config.G_phi_target, gc.nodes.size(), gc.num_edges);
                 cout << "After local flow, cut is reduced to n nodes: " << (*(best_round->cut)).size() << endl;
-                //assert (((*best_round->cut)).size() != 0);
-                
+                assert (((*(best_round->cut)).size()) != 0);                
                 GraphContext V_over_A;
-                map<Node, Node> finished_cut_map = graph_from_cut(gc, V_over_A, *(best_round->cut), map_to_original_graph, false);
-                node_maps_to_original_graph.push_back(finished_cut_map);
                 GraphContext A;
-                map<Node, Node> new_map = graph_from_cut(gc, A, *(best_round->cut), map_to_original_graph, true);
-                assert (A.nodes.size() > 0);
-                //node_maps_to_original_graph.push_back(new_map);
-                map <Node, Node> new_map_;
+                map<Node, Node> R_map = graph_from_cut(gc, V_over_A, (*best_round->cut), map_to_original_graph, true);
+                map<Node, Node> A_map = graph_from_cut(gc, A, (*best_round->cut), map_to_original_graph, false);
+                assert (A.nodes.size() + V_over_A.nodes.size() == gc.nodes.size());
+                //Q: should hold?
+                //assert (V_over_A.nodes.size() > 0);
+                node_maps_to_original_graph.push_back(A_map);
+                vector<map<Node, Node>> empty_map;
+                vector<map<Node, Node>> cuts_empty_map;
+                vector<map<Node, Node>> decomp_map = decomp(V_over_A, dg, config, R_map, cuts, cuts_empty_map);
+                node_maps_to_original_graph.insert(node_maps_to_original_graph.end(), decomp_map.begin(), decomp_map.end());
+              }
 
-                vector<set<Node>> labels = find_connected_components(A);
-                int node_cnt = 0;
-                cout << "Looping over decomp on graph with n: " << A.nodes.size() << " and e: " << A.num_edges << endl;
-                for (auto& sg_cut : labels) {
-                    cout << "decomp on cc (CM)" << endl;
-                    GraphContext sg;
-                    map<Node, Node> new_new_map = graph_from_cut(A, sg, sg_cut, new_map);
-                    vector<map<Node, Node>> decomp_map;
-                    vector<map<Node, Node>> empty_map;
-                    cout << "Subgraph has n: " << sg.nodes.size() << " and e: " << sg.num_edges << endl;
-                    decomp_map = decomp(sg, dg, config, new_new_map, cuts, empty_map);
-                    node_maps_to_original_graph.insert(node_maps_to_original_graph.end(), decomp_map.begin(), decomp_map.end());
-                    node_cnt = node_cnt + sg.nodes.size();
-                }
-                //assert (node_cnt + V_over_A.nodes.size() == (*(best_round->cut)).size());
-            }
-            else {
-            
+        } else {
+            assert (!(cm.reached_H_target));
+            //Q: will hold if we take last round instead of best round
+            //assert (best_round->relatively_balanced);
+            assert ((*(best_round->cut)).size() > 0 != gc.nodes.size());
             cout << "CASE2 Goodenough balanced cut" << endl;
             GraphContext A;
             cout << "Create map to original graph" << endl;
             map<Node, Node> new_map = graph_from_cut(gc, A, *(best_round->cut), map_to_original_graph);
             assert (A.nodes.size() == (*(best_round->cut)).size());
             cout << "Decomp on A" << endl;
-            map <Node, Node> new_map_;
-            vector<set<Node>> subgraph_maps = find_connected_components(A);
-            for (auto &sg_cut : subgraph_maps) {
-                GraphContext sg;
-                map<Node, Node> new_new_map = graph_from_cut(A, sg, sg_cut, new_map);
-                
-            
-                cout << "Decomp on graph with n: " << sg.nodes.size() << " e: " << sg.num_edges << endl;
-                assert (connected( sg.g ));
-                vector<map<Node, Node>> empty_map;
-                vector<map<Node, Node>> decomp_map = decomp(sg, dg, config, new_new_map, cuts, empty_map);
-                node_maps_to_original_graph.insert(node_maps_to_original_graph.end(), decomp_map.begin(), decomp_map.end());
-            }
 
+            vector<map<Node, Node>> empty_map;                
+            vector<map<Node, Node>> decomp_map = decomp(A, dg, config, new_map, cuts, empty_map);
+            node_maps_to_original_graph.insert(node_maps_to_original_graph.end(), decomp_map.begin(), decomp_map.end());
     
             GraphContext R;
             cout << "(R) create map to original graph" << endl;
             new_map = graph_from_cut(gc, R, *(best_round->cut), map_to_original_graph, true);
-            cout << "Decomp on R" << endl;
-            subgraph_maps = find_connected_components(R);
-            for (auto &sg_cut : subgraph_maps) {
-                GraphContext sg_R;
-                map<Node, Node> new_new_map_R = graph_from_cut(R, sg_R, sg_cut, new_map);
-                cout << "Decomp on graph with n: " << sg_R.nodes.size() << " e: " << sg_R.num_edges << endl;
-                assert ( connected ( sg_R.g) );
-                vector<map<Node, Node>> empty_map;
-                vector<map<Node, Node>> decomp_map = decomp(sg_R, dg, config, new_new_map_R, cuts, empty_map);
-                node_maps_to_original_graph.insert(node_maps_to_original_graph.end(), decomp_map.begin(), decomp_map.end());
-            }
-            assert (A.nodes.size() + R.nodes.size() == gc.nodes.size() );
-        }}
-    }
+            assert (A.nodes.size() + R.nodes.size() == gc.nodes.size());
+            vector<map<Node, Node>> empty_map_;
+            vector<map<Node, Node>> decomp_map_ = decomp(R, dg, config, new_map, cuts, empty_map_);
+            node_maps_to_original_graph.insert(node_maps_to_original_graph.end(), decomp_map_.begin(), decomp_map_.end());
+        }
+
+    
     return node_maps_to_original_graph;
 }
 
@@ -1539,6 +1542,7 @@ int main(int argc, char **argv) {
     ListDigraph dg;
     digraph_from_graph(gc.g, dg);
 
+    cout << "n: gc.g.nodes.size()" << " e: " << gc.num_edges << endl;
     map<Node, Node> map_to_original_graph;
     for (NodeIt n(gc.g); n!=INVALID; ++n)
         map_to_original_graph[n] = n;
@@ -1561,8 +1565,15 @@ int main(int argc, char **argv) {
 
     vector<int> all_nodes;
 
+    int n_singletons = 0;
     vector<vector<Node>> cuts_node_vector;
     for (const auto &m : cut_maps) {
+        if (m.size() == 1) {
+            for (const auto &c : m)
+                all_nodes.push_back(gc.g.id(c.second));
+            n_singletons++;
+            continue;
+        }
         cuts_node_vector.push_back(vector<Node>());
         for (const auto &c : m) {
             cout << gc.g.id(c.second) << " ";
@@ -1593,11 +1604,13 @@ int main(int argc, char **argv) {
         node_ratio_edges_inside.push_back((double)edges_inside_cluster/(double)all_edges);
     }
 
-  
-    cout << "All nodes included correctly" << endl;
 
     for (const auto &r : node_ratio_edges_inside)
         cout << r << endl;
+
+    cout << "singletons: " << n_singletons;
+
+    cout << "All nodes included correctly" << endl;
 
     ofstream file;
     file.open("cut.txt");
@@ -1616,56 +1629,7 @@ int main(int argc, char **argv) {
     
 
     return 0;
-
-    default_random_engine random_engine = config.seed_randomness
-                    ? default_random_engine(config.seed)
-                    : default_random_engine(random_device()());
-    CutMatching cm(gc, config, random_engine);
-    cm.run();
-
-    // TODO searching conditions different depending on if hit H
-    assert(!cm.sub_past_rounds.empty());
-    // Best by expnansion
-    auto& best_round = *max_element(cm.sub_past_rounds.begin(), cm.sub_past_rounds.end(), [](auto &a, auto &b) {
-        return a->g_expansion < b->g_expansion;
-    });
-
-    cout << "The best with highest expansion was found on round" << best_round->index << endl;
-    cout << "Best cut sparsity: " << endl;
-    auto &best_cut = best_round->cut;
-    CutStats<G>(gc.g, gc.nodes.size(), *best_cut).print();
-
-    if(config.use_H_phi_target && config.use_G_phi_target && config.use_volume_treshold) {
-        if(cm.reached_H_target) {
-            if(best_round->g_expansion < config.G_phi_target) {
-                cout << "CASE1 NO Goodenough cut, G certified expander." << endl;
-                //for (const auto &n : nodes) {
-                //file << (cut.count(n) ? "1" : "0") << "\n";
-            } else {
-                cout << "CASE3 Found goodenough but very unbalanced cut." << endl;
-                local_flow(gc.g, dg, config, *(best_round->cut), config.G_phi_target, gc.nodes.size(), gc.num_edges);
-            }
-        } else {
-            cout << "CASE2 Goodenough balanced cut" << endl;
-
-        }
-
-    }
-
-    cout << "DEBUG LOCAL FLOW" << "\n";
-    local_flow(gc.g, dg, config, *(best_round->cut), config.G_phi_target, gc.nodes.size(), gc.num_edges);
-    cout << "FINISHED LOCAL FLOW" << "\n";
-    //if (OUTPUT_CUT) { write_cut(gc.nodes, *best_cut); }
-    /*
-    if (config.compare_partition) {
-        read_partition_file(config.partition_file, gc.nodes, gc.reference_cut);
-        cout << endl
-             << "The given partition achieved the following:"
-             << endl;
-        CutStats<G>(gc.g, gc.nodes.size(), gc.reference_cut).print();
-    }
-    */
-    return 0;
+    
 }
 
 #pragma clang diagnostic pop

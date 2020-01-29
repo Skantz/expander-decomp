@@ -925,11 +925,11 @@ struct CutMatching {
 
         const auto& last_round = sub_past_rounds[sub_past_rounds.size() - 1];
 
-        if (config.use_volume_treshold && (last_round->relatively_balanced)) {
-            cout << "balanced cut" << endl;
-            return true;
-        }
-        if(last_round->multi_h_expansion >= config.H_phi_target) {
+        //if (config.use_volume_treshold && (last_round->relatively_balanced)) {
+        //    cout << "balanced cut" << endl;
+        //    return true;
+        //}
+        if (last_round->multi_h_expansion >= config.H_phi_target) {
             cout << "H Expansion target reached, this will be case 1 or 3. According to theory, this means we probably won't find a better cut. That is, assuming you set H_phi right. "
                     "If was used together with G_phi target, this also certifies the input graph is a G_phi expander unless there was a very unbaanced cut somewhere, which we will proceed to look for." << endl;
             reached_H_target = true;
@@ -1372,9 +1372,30 @@ vector<set<Node>> find_connected_components(GraphContext &g) {
 }
 
 
+/*
+set<Node> cut_from_cm(GraphContext& gc, Configuration config) {
+    cout << "init cut-matching" << endl;
+    default_random_engine random_engine = config.seed_randomness
+                    ? default_random_engine(config.seed)
+                    : default_random_engine(random_device()());
+    CutMatching cm(gc, config, random_engine);
+    cout << "Start cut-matching" << endl;
+    cm.run();
+    cout << "Finish cut-matching" << endl;
+    assert(!cm.sub_past_rounds.empty());
+    auto& best_round = *max_element(cm.sub_past_rounds.begin(), cm.sub_past_rounds.end(), [](auto &a, auto &b) {
+        return a->g_conductance < b->g_conductance;
+    });
+
+    return *(best_round->cut);
+}
+*/
 
 vector<map<Node, Node>> decomp(GraphContext &gc, ListDigraph &dg, Configuration config, map<Node, Node> map_to_original_graph, vector<set<Node>> cuts, vector<map<Node, Node>> node_maps_to_original_graph) {
 
+    int x = 0;
+    cin >> x;
+    
     if (gc.nodes.size() == 0)
         return node_maps_to_original_graph;
 
@@ -1391,7 +1412,7 @@ vector<map<Node, Node>> decomp(GraphContext &gc, ListDigraph &dg, Configuration 
             for (auto& n : sg_cut)
                 cout << gc.g.id(map_to_original_graph[n]) << " ";
             cout << endl;
-            GraphContext sg;
+            GraphContext* sg = new GraphContext;
             map<Node, Node> comp_map = graph_from_cut(gc, sg, sg_cut, map_to_original_graph);
             vector<map<Node, Node>> decomp_map;
             vector<map<Node, Node>> empty_map;
@@ -1430,8 +1451,10 @@ vector<map<Node, Node>> decomp(GraphContext &gc, ListDigraph &dg, Configuration 
     for (EdgeIt e(gc.g); e != INVALID; ++e) {
         assert (gc.g.u(e) != gc.g.v(e));
     }
+    
 
     cout << "init cut-matching" << endl;
+    cin >> x;
     default_random_engine random_engine = config.seed_randomness
                     ? default_random_engine(config.seed)
                     : default_random_engine(random_device()());
@@ -1443,6 +1466,9 @@ vector<map<Node, Node>> decomp(GraphContext &gc, ListDigraph &dg, Configuration 
     auto& best_round = *max_element(cm.sub_past_rounds.begin(), cm.sub_past_rounds.end(), [](auto &a, auto &b) {
         return a->g_conductance < b->g_conductance;
     });
+    cin >> x;
+
+    
 
     if (added_node) {
         (*(best_round->cut)).erase(temp_node);
@@ -1485,7 +1511,7 @@ vector<map<Node, Node>> decomp(GraphContext &gc, ListDigraph &dg, Configuration 
                 cout << "Call local flow with cut of size: " << (*(best_round->cut)).size() << endl;
                 *(best_round->cut) = local_flow(gc.g, dg_, config, *(best_round->cut), config.G_phi_target, gc.nodes.size(), gc.num_edges);
                 cout << "After local flow, cut is reduced to n nodes: " << (*(best_round->cut)).size() << endl;
-                assert (((*(best_round->cut)).size()) != 0);                
+                assert (((*(best_round->cut)).size()) != 0);
                 GraphContext V_over_A;
                 GraphContext A;
                 map<Node, Node> R_map = graph_from_cut(gc, V_over_A, (*best_round->cut), map_to_original_graph, true);

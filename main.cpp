@@ -1117,234 +1117,16 @@ vector<list<ListDigraph::Node>> unit_flow(const ListGraph &ug, const ListDigraph
     return level_queue;
 }
 
-set<Node> local_flow(const G &ug, const ListDigraph &g, Configuration conf, set<Node>& set_A, double phi, int v, int e) {
-
-    assert (set_A.size() > 0 );
-    struct flow_instance {
-        int v = 0;
-        int e = 0;
-        EdgeMap<double> cross_edge_source(G);
-        EdgeMap<double> edge_cap(G);
-        NodeMap<double> sink_node_cap(G);
-        NodeMap<int> degree(G);
-        NodeMap<bool> cut_map;
-
-        flow_instance(int v, int e, EdgeMap<double> &cross_edge_source(G), EdgeMap<double> &edge_cap(G),
-                      NodeMap<double> &sink_node_cap(G), NodeMap<int> &degree(G), NodeMap<bool> &cut_map(G));
-    };
-
-    // INITIALIZE ALL
-
-    ListDigraph::ArcMap<double> cross_edge_source(g); 
-    ListDigraph::ArcMap<double> edge_cap(g);
-    ListDigraph::ArcMap<double> flow(g);
-    ListDigraph::NodeMap<double> sink_node_cap(g);
-    ListDigraph::NodeMap<int> degree(g);
-    ListDigraph::NodeMap<int> node_label(g);
-    ListDigraph::NodeMap<bool> A(g, false);
-    ListDigraph::NodeMap<double> node_flow(g);
-    ListDigraph::NodeMap<bool> node_filter(g, true);
-
-    int num_cross;
-    double flow_target;
-    int h;
-    if (conf.h_ratio > 0)
-        h = e * conf.h_factor;
-    else
-        //h = int(1 / (phi * log2(e)) * conf.h_factor);//*conf.h_factor);
-        h = 40 * log2(2 * e) / phi;
-
-    h = max(h, 2);
-
-    vector<list<ListDigraph::Node>> level_queue;
-    for (int h_it = 0; h_it < h; h_it++) {
-        level_queue.push_back(list<ListDigraph::Node>());
-    }
-    cout << "local flow: h: " << h << " h factor: " << conf.h_factor << endl;
-    assert (level_queue.size() == h && h > 0);
-
-    for (NodeIt i(ug); i!=INVALID; ++i) {
-        ListDigraph::Node n = g.nodeFromId(ug.id(i));
-        if (set_A.count(i)) {
-            A[n] = true;
-            level_queue[0].push_back(n);
-            node_label[n] = 0;
-        }
-        else {
-            A[n] = false;
-        } 
-        node_flow[n] = 2/phi;
-    }
+using DG = ListDigraph;
+using DGNode = typename DG::Node;
+template<class T> using DGNodeMap = typename DG::template NodeMap<T>;
+using DGNodeIt = typename DG::NodeIt;
+using Arc = typename DG::Arc;
+template<class T> using ArcMap = typename DG::template ArcMap<T>;
+using DGOutArcIt = typename DG::OutArcIt;
 
 
-    ListDigraph::Node s = g.addNode();
-    ListDigraph::Node t = g.addNode();
-    node_flow[s] = 0;
-    node_flow[t] = 0;
-
-    for (ListDigraph::ArcIt i(g); i!=INVALID; ++i) {
-        if (A[g.source(i)] && !A[g.target(i)] && g.source(i) != g.target(i)) {
-            cross_edge_source[i] = 2/phi;
-            edge_cap[i] = 2/phi;
-            num_cross++;
-            ListDigraph::Arc e = g.addArc(s, g.source(i));
-            ListDigraph::Arc e_dummy = g.addArc(g.source(i), s);
-            edge_cap[e] = 2/phi;
-            edge_cap[e_dummy] = 0;
-            node_flow[s] = node_flow[s] + 2/phi;
-            
-
-        }
-        else if (!A[g.source(i)] && A[g.target(i)] && g.source(i) != g.target(i)) {
-            cross_edge_source[i] = 2/phi;
-            edge_cap[i] = 2/phi;
-            num_cross;
-            ListDigraph::Arc e = g.addArc(g.source(i), s);
-            ListDigraph::Arc e_dummy = g.addArc(s, g.source(i));
-            edge_cap[e] = 2/phi;
-            edge_cap[e_dummy] = 0;
-            node_flow[s] = node_flow[s] + 2/phi;
-        }
-        else {
-            cross_edge_source[i] = 0;
-            edge_cap[i] = 0;
-        }
-        degree[g.source(i)] += 1;
-        degree[g.target(i)] += 1;
-        flow[i] = 0;
-
-    }
-
-    int edges_interior = 0;
-    for (auto& n: set_A) {
-        for (IncEdgeIt e(ug, n); e != INVALID; ++e) {
-            if (set_A.count(ug.u(e)) && set_A.count(ug.v(e)))
-                edges_interior++;
-        }
-    }
-
-    if (conf.h_ratio > 0) {
-        h = int(conf.h_factor*edges_interior);
-        cout << "h changed to: " << h;
-    }
-    for (ListDigraph::NodeIt i(g); i!=INVALID; ++i) {
-        if (A[i])
-            sink_node_cap[i] = degree[i];
-        else
-            sink_node_cap[i] = 0;
-    }
-    
-    flow_target = 2*num_cross/phi;
-
-    bool found_feasible_routing = false;
-
-    cout << "local flow: h: " << h << endl;
-
-    struct flow_solution {
-        vector<vector<Node>> level_queue;
-        double flow;
-    };
-
-    while (!found_feasible_routing) {
-        cout << "Calling local flow /unit flow" << endl;
-        level_queue = unit_flow(ug, g, h, sink_node_cap,
-                      cross_edge_source,
-                      flow,
-                      node_flow,
-                      degree,
-                      edge_cap,
-                      level_queue,
-                      node_label,
-                      set_A); 
-
-        //Q: add self loops on cut in Trimming too?
-        int i_ = 0;
-        for (int i = h - 1; i >= 0; --i) {
-            i_ = i;
-            for (auto& node : level_queue[i]) {
-                if (set_A.count(ug.nodeFromId(g.id(node))) == 0)
-                    continue;
-                int edges_to_next_level = 0;
-                int edges_to_any_level  = 0;
-                //r (ListDigraph::OutArcIt e(g, *list_it); e!=INVALID; ++e)
-                for (ListDigraph::OutArcIt a(g, node); a!=INVALID; ++a) {
-                    if (set_A.count(ug.nodeFromId(g.id(g.source(a)))) == 0 || set_A.count(ug.nodeFromId(g.id(g.target(a)))) == 0)
-                        continue;
-                    edges_to_any_level++;
-                    if (node_label[g.target(a)] == i - 1)
-                        edges_to_next_level++;
-                }
-                cout << "edges to any level: " << edges_to_any_level << " edges to next level: " << edges_to_next_level << endl;
-                if (0 < edges_to_next_level <= 5 * edges_to_any_level * log2(e) / h) {
-                    cout << "local flow: level cut on index: " << i << endl;
-                    goto create_cut;
-                }
-            }
-        }
-
-    break;
-
-    create_cut:
-
-        int n_upper_queue_nodes = 0;
-        int n_lower_queue_nodes = 0;
-        assert (h > 1);
-
-        for (int j = h - 1; j >= 0; j--) {
-            if (j >= i_)
-                n_upper_queue_nodes += level_queue[j].size();
-            else
-                n_lower_queue_nodes += level_queue[j].size();
-        }
-        //for (int j = h - 1; j > i_; --j)
-        //    n_upper_queue_nodes += level_queue[j].size();
-        //for (int j = i_ - 1; j > 0; --j)
-        //    n_upper_queue_nodes += level_queue[j].size();;
-
-        if (n_upper_queue_nodes > n_lower_queue_nodes)
-            for (int j = i_ - 1; j >= 0; --j)
-                level_queue[j].clear();
-        else
-            for (int j = h - 1; j >= i_ ; --j)
-                level_queue[j].clear();
-        cout << "local flow: Upper: " << n_upper_queue_nodes << endl;
-        cout << "local flow: Lower: " << n_lower_queue_nodes << endl;
-        cout << "local flow: set A size: " << set_A.size() << endl;
-
-        assert (n_upper_queue_nodes + n_lower_queue_nodes == set_A.size());
-        for (int i = 0; i < h; i++)
-            if (level_queue[i].size() > 0)
-                cout << "local flow: level queue level " << i << " : " << level_queue[i].size() << endl;
-
-        set<Node> new_set_A;
-        for (int i = h - 1; i >= 0; --i) {
-            for (auto& node : level_queue[i]) {
-                assert (!(new_set_A.count(ug.nodeFromId(g.id(node)))));
-                (new_set_A).insert(ug.nodeFromId(g.id(node)));
-             }
-        }
-        assert (0 < new_set_A.size() <= v);
-       //Q: not finding a cut -> not found a feasible routing
-        if (new_set_A.size() == set_A.size()) {
-            found_feasible_routing = true;
-            break;
-        }
-
-        if (new_set_A.size() > set_A.size()) {
-            found_feasible_routing = true;
-            break;
-        }
-
-        set_A = new_set_A;
-        assert (set_A.size() > 0);
-    }
-
-    assert (set_A.size() > 0);
-    return set_A;
-}
-
-
-ListDigraph *digraph_from_graph(G &g, ListDigraph &dg) {
+ListDigraph *digraph_from_graph(G &g, DG &dg) {
 
     for(NodeIt n(g); n!=INVALID; ++n)
         dg.addNode();
@@ -1356,6 +1138,255 @@ ListDigraph *digraph_from_graph(G &g, ListDigraph &dg) {
 
     return &dg;
 }
+
+struct flow_instance {
+
+    flow_instance (DG& dg_) :
+    edge_flow(dg_, 0),
+    edge_cap(dg_, 2/phi),
+    node_flow(dg_, 0),
+    node_cap(dg_, 0),
+    node_label(dg_, 0)
+    {} ;
+
+    int h; 
+    double phi;
+    int n;
+    int e;
+
+    ArcMap<double> edge_flow;
+    ArcMap<double> edge_cap;
+
+    DGNodeMap<double> node_flow;
+    DGNodeMap<double> node_cap;
+
+    DGNodeMap<int> node_label;
+
+    set<DGNode> A;
+    list<Arc> arc_nodes;
+};
+
+int OutDegree(DG& dg, DGNode n) {
+    int s = 0;
+    for(DGOutArcIt e(dg, n);  e != INVALID; ++e) {
+        s += 1;
+    }
+    return s;
+}
+
+//Q: should iterate over edges in cut
+set<DGNode> level_cut(DG& dg, flow_instance& fp, vector<list<DGNode>>& level_queue, set<DGNode>& set_A) {
+    int n_cut = set_A.size();
+    int cut_index = 0;
+    int cut_sum = 0;
+    int s_vol;
+    int z_i;
+    set<DGNode> R;
+    int e = fp.e;
+    int n_upper_nodes;
+
+    for (int i = level_queue.size() - 1 ; i >= 0; i--) {
+        n_upper_nodes = 0;
+        s_vol = 0;
+        z_i   = 0;
+        for (auto& n: level_queue[i]) {
+            n_upper_nodes++;
+            for (DGOutArcIt e(dg, e); e!= INVALID; ++e) {
+                s_vol++;
+                if (fp.node_label[n] - 1 == fp.node_label[dg.target(e)]); {
+                    z_i++;
+                }
+            }
+        }
+        if (z_i < 5 * s_vol * log2(e) / fp.h) {
+            cut_index = i;
+            break;
+        }
+    }
+    assert (cut_index >= 0);
+    fp.A.clear();
+    if (n_upper_nodes > set_A.size()/2) {
+        for (int i = level_queue.size() - 1; i >= cut_index; i--) {
+            for (auto& n: level_queue[i])
+                R.insert(n);
+            level_queue[i].clear();
+        }
+    }
+    else {
+        for (int i = cut_index - 1; i >= 0; i--) {
+            level_queue[i].clear();
+            for (auto& n: level_queue[i])
+                R.insert(n);
+
+        }
+    }
+    for (int i = level_queue.size() - 1; i >= 0; i--) {
+        for (auto& n: level_queue[i]) {
+            fp.A.insert(n);
+        }
+    }
+    return R;
+}
+
+void adjust_flow_source (DG& dg, flow_instance& fp, set<DGNode> &set_A, set<DGNode> &set_R) {
+    for (auto& n: set_R) {
+        for(DGOutArcIt e(dg, n); e != INVALID; ++e) {
+            if (!set_R.count(dg.target(e))) {
+                fp.node_flow[n] += 2/fp.phi;
+                fp.edge_cap[e] = 2/fp.phi;
+            }
+        }
+    }
+}
+
+void uf(DG& dg, flow_instance& fp) {
+
+    //Set up level queues
+    vector<list<DGNode>> level_queue;
+    for (int i = 0; i < fp.h; i++) {
+        level_queue.push_back(list<DGNode>());
+    }
+
+    unit_setup:
+    for (auto& n : fp.A)
+        level_queue[0].push_back(n);
+
+    bool excess_flow = true; 
+
+    struct push_relabel {
+
+        struct push {
+
+        };
+
+        struct relabel {
+
+        };
+    };
+
+    excess_flow = true;
+    cout << "local flow: start unit flow" << endl;
+    unit_start:
+    while (excess_flow) {
+        excess_flow = false;
+        for (int lv = 0; lv < fp.h - 1; lv++) {
+            for (auto& n : level_queue[lv]) {
+                if (fp.node_flow[n] > fp.node_cap[n]) { //push-relabel
+                    for (DGOutArcIt e(dg, n); e != INVALID; ++e) {
+                        if (dg.source(e) == dg.target(e))
+                            continue;
+                        if (!fp.A.count(dg.source(e)) && !fp.A.count(dg.target(e)))
+                            continue;
+                        if (fp.node_label[n] - fp.node_label[(dg.target(e))] == 1) {// push 
+                            assert(fp.node_flow[dg.source(e)] - fp.node_cap[dg.target(e)] == 0);
+                            double ex_flow = fp.node_flow[n] > fp.node_cap[n];
+                            double res_flow = fp.node_cap[n] - fp.node_flow[n];
+                            double deg_min_ex = fp.node_cap[n]* fp.phi/2;
+                            double phi = min(ex_flow, min(res_flow, deg_min_ex));
+                            fp.node_flow[n] -= phi;
+                            fp.node_flow[dg.target(e)] += phi;
+                            fp.node_flow[dg.source(e)] -= phi;
+                            fp.edge_flow[e] += phi;
+                            excess_flow = true;
+                            goto unit_start;
+                        }
+
+                    // relabel
+                    level_queue[lv + 1].push_back(n);
+                    level_queue[lv].remove(n);
+
+                    fp.node_label[n] = fp.node_label[n] + 1;
+                    excess_flow = true;
+                    goto unit_start;
+                    }
+                }   
+            }
+        }
+    }
+    cout << "finish run of uf" << endl;
+    int cut_size_before = fp.A.size();
+    cout << "cut size before: " << cut_size_before << endl;
+    set<DGNode> R = level_cut(dg, fp, level_queue, fp.A);
+    adjust_flow_source(dg, fp, fp.A, R);
+    cout << "cut_size_after" << fp.A.size() << endl;
+    if (cut_size_before == R.size())
+        return;
+    goto unit_setup;
+    //End
+}
+
+set<Node> trimming(GraphContext& gc, Configuration conf, set<Node> cut, double phi) {
+    //Working on undirected graph
+    //"Forward direction" is higher node ID to lower node ID
+    //Delta
+    //T
+    //c
+    //
+    //f(v) <= T(v) - flow conditions
+    //f(v) > T(V) - excess flow
+    //f_1 (u, v) = 0
+    //l1(u) = 0
+    //|delta< < 3m/2
+    //int h = 40 * log2(gc.num_edges) / phi;
+    //EdgeMap<double> flow;
+
+    DG dg;
+    digraph_from_graph(gc.g, dg);
+
+    flow_instance fp = flow_instance(dg);
+    fp.n = gc.nodes.size();
+    fp.e = gc.num_edges;
+    set<DGNode> R;
+    for (auto& n: cut)
+        R.insert(dg.nodeFromId(gc.g.id(n)));
+    set<DGNode> temp_all_nodes;
+    
+    for (int i = 0; i < gc.nodes.size(); ++i)
+        temp_all_nodes.insert(dg.nodeFromId(i));
+
+    //Q: this right?
+    std::set_difference(temp_all_nodes.begin(), temp_all_nodes.end(), R.begin(), R.end(),
+                        std::inserter(fp.A, fp.A.end()));
+                        R.swap(fp.A);
+
+    fp.h = 40 * log2(gc.num_edges) /phi;
+    fp.phi = phi;
+    //Wasteful but still mlogm
+    //Crossing edge sources
+    for (auto& n: R) {
+        for (DGOutArcIt e(dg, n); e != INVALID; ++e) {
+            if (R.count(dg.source(e)) && !R.count(dg.target(e)))
+                fp.node_flow[dg.target(e)] += 2/phi;
+            else if (R.count(dg.source(e)) && !R.count(dg.target(e)))
+                fp.node_flow[dg.source(e)] += 2/phi;
+        }
+    }
+    //set sink capacities
+    for (auto& n : fp.A) {
+        fp.node_cap[n] += 2/phi;
+        fp.node_label[n] = 0;
+    }
+    for (auto& n : R) {
+        for (DGOutArcIt e(dg, n); e != INVALID; ++e) {
+            if (!R.count(dg.source(e)) && !R.count(dg.target(e)))
+                fp.edge_cap[e] = 0;
+        }
+    }
+ 
+    // add edge nodes 
+
+    uf(dg, fp);
+
+    //dummy
+    cut.clear();
+    for (auto& n: fp.A) {
+        cut.insert(gc.g.nodeFromId(dg.id(n)));
+    }
+    return cut;
+}
+
+
+
 
 
 map<Node, Node> graph_from_cut(GraphContext &g, GraphContext &sg, set<Node> cut, map<Node, Node> old_map, bool complement=false) {
@@ -1691,7 +1722,7 @@ vector<map<Node, Node>> decomp(GraphContext &gc, ListDigraph &dg, Configuration 
 
         cout << "Call local flow with cut of size: " << (*(best_round->cut)).size() << endl;
         standalone_conductance(gc, (*(best_round->cut)));
-        *(best_round->cut) = local_flow(gc.g, dg_, config, *(best_round->cut), config.G_phi_target, gc.nodes.size(), gc.num_edges);
+        *(best_round->cut) = trimming(gc, config, *(best_round->cut), config.G_phi_target);
         cout << "After local flow, cut is reduced to n nodes: " << (*(best_round->cut)).size() << endl;
         standalone_conductance(gc, (*(best_round->cut)));
         assert (((*(best_round->cut)).size()) != 0);

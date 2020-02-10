@@ -1139,7 +1139,9 @@ struct flow_instance {
 
     set<DGNode> A;
     set<DGNode> R;
-    list<Arc> arc_nodes;
+
+    set<DGNode> active_nodes;
+    set<DGNode> trimmed_last_round;
 };
 
 int OutDegree(DG& dg, DGNode n) {
@@ -1151,35 +1153,35 @@ int OutDegree(DG& dg, DGNode n) {
 }
 
 //Q: should iterate over edges in cut
-set<DGNode> level_cut(DG& dg, flow_instance& fp, vector<list<DGNode>>& level_queue, set<DGNode>& set_A, set<DGNode>& set_R) {
-    int n_cut = set_A.size();
-    int cut_index = 0;
+set<DGNode> level_cut(DG& dg, flow_instance& fp, vector<list<DGNode>>& level_queue) {
+    int n_cut = fp.A.size();
+    int cut_index = fp.h - 1;
     int cut_sum = 0;
     int s_vol = 0;
     int z_i = 0;
-    set<DGNode> R;
+
     set<DGNode> trimmed_nodes;
     int e = fp.e;
     int n_upper_nodes = 0;
     cout << "local flow: start level cut" << endl;
     for (int i = level_queue.size() - 1 ; i >= 0; i--) {
-
         s_vol = 0;
         z_i   = 0;
         if (level_queue[i].size() > 0)
             cout << "local flow: level queue at level: " << i << " has size: " << level_queue[i].size() << endl;
         int r_count = 0;
-        for (auto& n : set_R)
+        for (auto& n : fp.R)
             if (find(level_queue[i].begin(), level_queue[i].end(), n) != level_queue[i].end())
                 r_count += 1;
         if (r_count)
             cout << "local flow: r count at lvl: " << i << " is: " << r_count << endl;
+        n_upper_nodes += level_queue[i].size();
         for (auto& n: level_queue[i]) {
-            if (R.count(n))
+            if (fp.R.count(n))
                 continue;
-            n_upper_nodes++;
+            assert(fp.A.count(n));
             for (DGOutArcIt e(dg, n); e!= INVALID; ++e) {
-                if (R.count(dg.source(e)) && R.count(dg.target(e)))
+                if (fp.R.count(dg.source(e)) && fp.R.count(dg.target(e)))
                     continue;
                 s_vol++;
                 if (fp.node_label[n] - 1 == fp.node_label[dg.target(e)]); {
@@ -1187,60 +1189,70 @@ set<DGNode> level_cut(DG& dg, flow_instance& fp, vector<list<DGNode>>& level_que
                 }
             }
         }
-        if (z_i <= 5. * s_vol * log2(e) / fp.h && z_i != 0) {
+        if (z_i <= 5. * s_vol * log2(e) / fp.h) {
             cut_index = i;
             break;
         }
     }
-    cout << "s_vol: " << s_vol << "log2(e)" << log2(e) << "e: " << e << "fp.h:  " << fp.h;
-    cout << "local flow: cut thresh is: " << 5.0 * s_vol * log2(e) / fp.h;
-    cout << "local flow: cut index is: " << cut_index << endl;
-    assert (cut_index >= 0);
+    cout << "local flow: s_vol: " << s_vol << "log2(e)" << log2(e) << "e: " << e << "fp.h:  " << fp.h << endl;
+    cout << "local flow: cut thresh is: " << 5.0 * s_vol * log2(e) / fp.h << endl;
+    cout << "local flow: cut index is: " << cut_index << " A size: " << fp.A.size();
+    assert (cut_index > 0);
+    trimmed_nodes.clear();
+
+    cout << "local flow: n upper nodes: " << n_upper_nodes << endl; 
+    assert(n_upper_nodes <= fp.A.size());
     fp.A.clear();
-    if (n_upper_nodes < set_A.size()/2) {
+    if (n_upper_nodes >= fp.A.size()/2) {
         for (int i = level_queue.size() - 1; i >= cut_index; i--) {
-            for (auto& n: level_queue[i])
-                if (!(R.count(n))) {
-                    R.insert(n);
-                    trimmed_nodes.insert(n);
+            for (auto& n: level_queue[i]) {
+                assert(fp.R.count(n) == 0 && trimmed_nodes.count(n) == 0);
+                fp.R.insert(n);
+                trimmed_nodes.insert(n);
                 }
+                
             level_queue[i].clear();
         }
     }
     else {
         for (int i = cut_index - 1; i >= 0; i--) {
-            for (auto& n: level_queue[i])
-                if (!(R.count(n))) {
-                    R.insert(n);
-                    trimmed_nodes.insert(n);
-                }
+            for (auto& n: level_queue[i]) {
+                assert(fp.R.count(n) == 0 && trimmed_nodes.count(n) == 0);
+                fp.R.insert(n);
+                trimmed_nodes.insert(n);
+            }
             level_queue[i].clear();
         }
     }
-    for (int i = level_queue.size() - 1; i >= 0; i--) {
-        for (auto& n: level_queue[i]) {
-            if (R.count(n) == 0 && trimmed_nodes.count(n) == 0) {
-                fp.A.insert(n);
-            }
+    for (auto& lst: level_queue) {
+        for (auto& n: lst) {
+            assert (fp.R.count(n) == 0 && trimmed_nodes.count(n) == 0);
+            fp.A.insert(n);
         }
-    }
+    } 
+    cout << "local flow: trimmed nodes size: " << trimmed_nodes.size() << endl;
     return trimmed_nodes;
 }
 
-void adjust_flow_source (DG& dg, flow_instance& fp, set<DGNode> &set_A, set<DGNode> &set_R, set<DGNode> trimmed_nodes) {
+void adjust_flow_source (DG& dg, flow_instance& fp, set<DGNode> trimmed_nodes) {
+    assert(trimmed_nodes.size() <= fp.R.size());
     for (auto& n: trimmed_nodes) {
+        assert(!fp.A.count(n));
         for(DGOutArcIt e(dg, n); e != INVALID; ++e) {
-            if (set_A.count(dg.target(e))) {
-                fp.node_flow[n] += 2/fp.phi;
-                fp.edge_cap[e] = 2/fp.phi;
-                fp.edge_flow[e] = 2/fp.phi;
+            if (fp.A.count(dg.target(e))) {
+                fp.node_flow[n] += 2.0/fp.phi;
+                fp.edge_cap[e] = 2.0/fp.phi;
+                fp.edge_flow[e] = 2.0/fp.phi;
+                fp.edge_flow[fp.reverse_arc[e]] = -2/fp.phi;
             }
         }
     }
+    return;
 }
 
 void uf(DG& dg, flow_instance& fp) {
 
+    bool excess_flow;
     assert (fp.A.size() > 0  && fp.R.size() > 0 && fp.A.size() > fp.R.size());
     //Set up level queues
     vector<list<DGNode>> level_queue;
@@ -1251,17 +1263,18 @@ void uf(DG& dg, flow_instance& fp) {
     unit_setup:
     for (int i = 0; i < fp.h; i++) {
         level_queue[i].clear();
+        assert(level_queue[i].size() == 0);
     }
 
-    for (DGNodeIt n(dg); n != INVALID; ++n) {
+    for (auto& n: fp.A) {
         level_queue[0].push_back(n);
         assert(fp.node_flow[n] >= 0);
     }
 
-    bool excess_flow = true; 
-
     cout << "local flow: start unit flow" << endl;
     unit_start:
+    excess_flow = true;
+
     int cut_size_before = fp.A.size();
     while (excess_flow) {
         excess_flow = false;
@@ -1305,12 +1318,16 @@ void uf(DG& dg, flow_instance& fp) {
                             continue;
                         assert (n == dg.source(e));
                         if (fp.edge_cap[e] - fp.edge_flow[e] > 0)
-                            assert (fp.node_label[n] <= fp.node_label[dg.target(e)] );
+                            ;//assert (fp.node_label[n] <= fp.node_label[dg.target(e)] );
                     }
                     //cout << "local flow: relabel" << endl;
+                    int c1 = level_queue[lv + 1].size();
+                    int c2 = level_queue[lv].size();
                     level_queue[lv + 1].push_back(n);
                     fp.node_label[n] = fp.node_label[n] + 1;
                     level_queue[lv].remove(n);
+                    assert(level_queue[lv + 1].size() == c1 + 1);
+                    assert(level_queue[lv].size() == c2 - 1);
                     excess_flow = true;
                     goto unit_start;
                 } 
@@ -1320,12 +1337,15 @@ void uf(DG& dg, flow_instance& fp) {
     cout << "local_flow: finish run of uf" << endl;
     cout << "local_flow: cut size before: " << cut_size_before << endl;
     cout << "local_flow: complement size before: " << fp.R.size() << endl;
-    set<DGNode> trimmed_nodes = level_cut(dg, fp, level_queue, fp.A, fp.R);
-    adjust_flow_source(dg, fp, fp.A, fp.R, trimmed_nodes);
+    set<DGNode> trimmed_nodes = level_cut(dg, fp, level_queue);
+    adjust_flow_source(dg, fp, trimmed_nodes);
     //NOT QUITE RIGHT
-    for (auto& n: fp.R)
-        fp.A.erase(n);
+    //assert (trimmed_nodes.size() <= cut_size_before/2);
+    //Q: doing this already
+    //for (auto& n: trimmed_nodes)
+        //fp.A.erase(n);
     cout << "local flow: cut_size_after" << fp.A.size() << endl;
+    //assert (fp.A.size() >= cut_size_before/2 && "decomp on larger side of cut");
     cout << "local flow: complement siz after" << fp.R.size() << endl;
     //assert (fp.A.size() <= cut_size_before);
 
@@ -1492,8 +1512,8 @@ set<Node> trimming(GraphContext& gc, Configuration conf, set<Node> cut, double p
                 fp.node_flow[n] += 2.0/phi;
                 //Flow is sourced "from edges"
                 fp.edge_flow[e] = 2.0/phi;
-                //fp.node_flow[dg.target(e)] += 2.0/phi;
-                //fp.edge_flow[fp.reverse_arc[e]] = -2.0/phi;
+                fp.node_flow[dg.target(e)] += 2.0/phi;
+                fp.edge_flow[fp.reverse_arc[e]] = -2.0/phi;
             }
             else {
                 fp.edge_cap[e] = 0;
@@ -1504,14 +1524,11 @@ set<Node> trimming(GraphContext& gc, Configuration conf, set<Node> cut, double p
         fp.node_cap[n] = 0.0;
     }
 
-// add edge nodes 
 
-for(DGNodeIt n(dg); n != INVALID; ++n) {
-    for(DGOutArcIt e(dg, n); e != INVALID; ++e) {
-        ;
+    for(auto& n : fp.A) {
+        if (fp.node_flow[n] > fp.node_cap[n])
+            fp.active_nodes.insert(n);
     }
-}
-//return cut;
 
     assert (fp.A.size() >= fp.R.size());
     uf(dg, fp);

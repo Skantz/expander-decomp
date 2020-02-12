@@ -820,8 +820,8 @@ struct CutMatching {
         //return config.volume_treshold_factor * sgc.origContext.nodes.size();
         if (config.h_ratio)
             return sgc.origContext.num_edges * config.h_ratio;
-
-        return (double(sgc.origContext.num_edges) / (10 * config.volume_treshold_factor * pow(log2(sgc.origContext.num_edges), 2)));
+        else
+            return (double(sgc.origContext.num_edges) / (10 * config.volume_treshold_factor * pow(log2(sgc.origContext.num_edges), 2)));
     }
 
     /*
@@ -1236,16 +1236,22 @@ set<DGNode> level_cut(DG& dg, flow_instance& fp, vector<list<DGNode>>& level_que
 
 void adjust_flow_source (DG& dg, flow_instance& fp, set<DGNode> trimmed_nodes) {
     assert(trimmed_nodes.size() <= fp.R.size());
+    bool node_is_active;
     for (auto& n: trimmed_nodes) {
+        node_is_active = false;
         assert(!fp.A.count(n));
         for(DGOutArcIt e(dg, n); e != INVALID; ++e) {
+            assert(!fp.A.count(n));
             if (fp.A.count(dg.target(e))) {
+                node_is_active = true;
                 fp.node_flow[n] += 2.0/fp.phi;
                 fp.edge_cap[e] = 2.0/fp.phi;
                 fp.edge_flow[e] = 2.0/fp.phi;
                 fp.edge_flow[fp.reverse_arc[e]] = -2/fp.phi;
             }
         }
+        if (node_is_active)
+            fp.active_nodes.insert(n);
     }
     return;
 }
@@ -1261,7 +1267,13 @@ void uf(DG& dg, flow_instance& fp) {
     }
 
     unit_setup:
-    for (int i = 0; i < fp.h; i++) {
+    level_queue.clear();
+
+    for (int i = 0; i < fp.h && i < fp.A.size(); i++) {
+        level_queue.push_back(list<DGNode>());
+    }
+
+    for (int i = 0; i < fp.h && i < fp.A.size(); i++) {
         level_queue[i].clear();
         assert(level_queue[i].size() == 0);
     }
@@ -1276,7 +1288,7 @@ void uf(DG& dg, flow_instance& fp) {
     excess_flow = true;
 
     int cut_size_before = fp.A.size();
-    while (excess_flow) {
+    for (auto& n: fp.active_nodes) {
         excess_flow = false;
         for (int lv = 0; lv < fp.h - 1; lv++) {
             for (auto& n : level_queue[lv]) {
@@ -1304,6 +1316,10 @@ void uf(DG& dg, flow_instance& fp) {
                             //fp.node_flow[dg.source(e)] -= phi;
                             fp.edge_flow[e] += phi;
                             fp.edge_flow[fp.reverse_arc[e]] -= phi;
+                            if (fp.node_flow[n] <= fp.node_cap[n])
+                                fp.active_nodes.erase(n);
+                            if (fp.node_flow[dg.target(e)] > fp.node_cap[dg.target(e)] && fp.node_flow[dg.target(e)] - phi <= fp.node_cap[dg.target(e)])
+                                fp.active_nodes.insert(dg.target(e));
                             excess_flow = true;
                             //cout << "local flow: " << fp.node_flow[n] << " " << fp.node_cap[n] << endl;
                             //cout << "local flow:" << ex_flow << " " << res_flow << " " << deg_min_ex << endl;
@@ -1478,7 +1494,8 @@ set<Node> trimming(GraphContext& gc, Configuration conf, set<Node> cut, double p
 
     fp.A = A;
     fp.R = R;
-    fp.h = 40 * log2(gc.num_edges) /phi;
+    fp.h = 40 * log2(2 * gc.num_edges) /phi;
+    fp.h = A.size();
     fp.phi = phi;
     //Wasteful but still mlogm
     //Crossing edge sources
@@ -1739,6 +1756,9 @@ double standalone_conductance(GraphContext& gc, set<Node> cut) {
 }
 
 
+void connect_induced_subgraphs(GraphContext &gc, set<Node> A) {
+    
+}
 
 vector<map<Node, Node>> decomp(GraphContext &gc, Configuration config, map<Node, Node> map_to_original_graph, vector<map<Node, Node>> node_maps_to_original_graph) {
 
@@ -1914,6 +1934,7 @@ vector<map<Node, Node>> decomp(GraphContext &gc, Configuration config, map<Node,
         cout << "After local flow (real), cut is reduced to n nodes: " << real_trim_cut.size() << endl;
         cout << "local flow: real cut has conductance: " << endl;
         standalone_conductance(gc, real_trim_cut);
+        cut = real_trim_cut;
         assert (cut.size() != 0);
         GraphContext V_over_A;
         GraphContext A;
@@ -1978,8 +1999,10 @@ int main(int argc, char **argv) {
     vector<vector<Node>> cuts_node_vector;
     for (const auto &m : cut_maps) {
         if (m.size() == 1) {
-            for (const auto &c : m)
+            for (const auto &c : m) {
+                assert(count(all_nodes.begin(), all_nodes.end(), gc.g.id(c.second)) == 0);
                 all_nodes.push_back(gc.g.id(c.second));
+            }
             n_singletons++;
             continue;
         }

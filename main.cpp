@@ -1170,11 +1170,6 @@ set<DGNode> level_cut(DG& dg, flow_instance& fp, vector<list<DGNode>>& level_que
         if (level_queue[i].size() > 0)
             cout << "local flow: level queue at level: " << i << " has size: " << level_queue[i].size() << endl;
         int r_count = 0;
-        for (auto& n : fp.R)
-            if (find(level_queue[i].begin(), level_queue[i].end(), n) != level_queue[i].end())
-                r_count += 1;
-        if (r_count)
-            cout << "local flow: r count at lvl: " << i << " is: " << r_count << endl;
         n_upper_nodes += level_queue[i].size();
         for (auto& n: level_queue[i]) {
             if (fp.R.count(n))
@@ -1202,8 +1197,8 @@ set<DGNode> level_cut(DG& dg, flow_instance& fp, vector<list<DGNode>>& level_que
 
     cout << "local flow: n upper nodes: " << n_upper_nodes << endl; 
     assert(n_upper_nodes <= fp.A.size());
-    fp.A.clear();
-    if (n_upper_nodes >= fp.A.size()/2) {
+
+    if (n_upper_nodes < fp.A.size()/2) {
         for (int i = level_queue.size() - 1; i >= cut_index; i--) {
             for (auto& n: level_queue[i]) {
                 assert(fp.R.count(n) == 0 && trimmed_nodes.count(n) == 0);
@@ -1214,7 +1209,7 @@ set<DGNode> level_cut(DG& dg, flow_instance& fp, vector<list<DGNode>>& level_que
             level_queue[i].clear();
         }
     }
-    else {
+    else if (n_upper_nodes >= fp.A.size()/2) {
         for (int i = cut_index - 1; i >= 0; i--) {
             for (auto& n: level_queue[i]) {
                 assert(fp.R.count(n) == 0 && trimmed_nodes.count(n) == 0);
@@ -1224,6 +1219,9 @@ set<DGNode> level_cut(DG& dg, flow_instance& fp, vector<list<DGNode>>& level_que
             level_queue[i].clear();
         }
     }
+
+    fp.A.clear();
+
     for (auto& lst: level_queue) {
         for (auto& n: lst) {
             assert (fp.R.count(n) == 0 && trimmed_nodes.count(n) == 0);
@@ -1231,6 +1229,7 @@ set<DGNode> level_cut(DG& dg, flow_instance& fp, vector<list<DGNode>>& level_que
         }
     } 
     cout << "local flow: trimmed nodes size: " << trimmed_nodes.size() << endl;
+    cout << "local flow: retained nodes size: " << fp.A.size() << endl;
     return trimmed_nodes;
 }
 
@@ -1288,13 +1287,22 @@ void uf(DG& dg, flow_instance& fp) {
     excess_flow = true;
 
     int cut_size_before = fp.A.size();
-    for (auto& n: fp.active_nodes) {
-        excess_flow = false;
-        for (int lv = 0; lv < fp.h - 1; lv++) {
-            for (auto& n : level_queue[lv]) {
+    while( fp.active_nodes.size() > 0 ) {
+        int lowest_label = fp.h;
+        DGNode n;
+        for (auto& n_: fp.active_nodes) {
+            if (fp.node_label[n_] < lowest_label) {
+                lowest_label = fp.node_label[n_];
+                n = n_;
+            }
+        }
+        excess_flow = true;
+        //for (int lv = 0; lv < fp.h - 1; lv++) {
+        //    for (auto& n : level_queue[lv]) {
                 assert (fp.node_flow[n] >= 0);
+                assert (fp.node_label[n] < fp.h - 1);
                 //cout << "local flow: node flow: " << fp.node_flow[n] << " node cap " << fp.node_cap[n] << endl;
-                if (fp.node_flow[n] > fp.node_cap[n]) { //push-relabel
+                assert (fp.node_flow[n] > fp.node_cap[n]);  //push-relabel
                     //cout << "local flow: push relabel" << endl;
                     for (DGOutArcIt e(dg, n); e != INVALID; ++e) {
 
@@ -1337,38 +1345,38 @@ void uf(DG& dg, flow_instance& fp) {
                             ;//assert (fp.node_label[n] <= fp.node_label[dg.target(e)] );
                     }
                     //cout << "local flow: relabel" << endl;
+                    int lv = fp.node_label[n];
                     int c1 = level_queue[lv + 1].size();
                     int c2 = level_queue[lv].size();
                     level_queue[lv + 1].push_back(n);
-                    fp.node_label[n] = fp.node_label[n] + 1;
                     level_queue[lv].remove(n);
+                    fp.node_label[n] = fp.node_label[n] + 1;
                     assert(level_queue[lv + 1].size() == c1 + 1);
                     assert(level_queue[lv].size() == c2 - 1);
-                    excess_flow = true;
+                    if (fp.node_label[n] == fp.h - 1)
+                        fp.active_nodes.erase(n);
                     goto unit_start;
-                } 
-            }
-        }
+                //} 
+          //  }
+        //}
     }
     cout << "local_flow: finish run of uf" << endl;
     cout << "local_flow: cut size before: " << cut_size_before << endl;
     cout << "local_flow: complement size before: " << fp.R.size() << endl;
     set<DGNode> trimmed_nodes = level_cut(dg, fp, level_queue);
     adjust_flow_source(dg, fp, trimmed_nodes);
-    //NOT QUITE RIGHT
-    //assert (trimmed_nodes.size() <= cut_size_before/2);
-    //Q: doing this already
-    //for (auto& n: trimmed_nodes)
-        //fp.A.erase(n);
+
     cout << "local flow: cut_size_after" << fp.A.size() << endl;
-    //assert (fp.A.size() >= cut_size_before/2 && "decomp on larger side of cut");
     cout << "local flow: complement siz after" << fp.R.size() << endl;
-    //assert (fp.A.size() <= cut_size_before);
 
     if (cut_size_before == fp.A.size())
         return;
+    for (auto& n: trimmed_nodes)
+        fp.active_nodes.erase(n);
+    
     goto unit_setup;
-    //End
+    
+    return;
 }
 
 set<Node> slow_trimming(GraphContext& gc, Configuration conf, set<Node> cut, double phi) {
@@ -1756,10 +1764,6 @@ double standalone_conductance(GraphContext& gc, set<Node> cut) {
 }
 
 
-void connect_induced_subgraphs(GraphContext &gc, set<Node> A) {
-    
-}
-
 vector<map<Node, Node>> decomp(GraphContext &gc, Configuration config, map<Node, Node> map_to_original_graph, vector<map<Node, Node>> node_maps_to_original_graph) {
 
     int x = 0;
@@ -1858,9 +1862,11 @@ vector<map<Node, Node>> decomp(GraphContext &gc, Configuration config, map<Node,
     GraphContext sg_2;
     map<Node, Node> nm_1 =  graph_from_cut(gc, sg_1, *best_cut, map_to_original_graph, false); 
     map<Node, Node> nm_2 =  graph_from_cut(gc, sg_2, *best_cut, map_to_original_graph, true);
-
+    /*
     if (!connected(sg_1.g) || !connected(sg_2.g)) {
     //No guarantee, continue
+        vector<set<Node>> labels = find_connected_components(sg_1);
+
         //cout << "local flow: one component not connected" << endl;
         vector<map<Node, Node>> empty_map;
         vector<map<Node, Node>> decomp_map = decomp(sg_1, config, nm_1, empty_map);
@@ -1870,7 +1876,7 @@ vector<map<Node, Node>> decomp(GraphContext &gc, Configuration config, map<Node,
         node_maps_to_original_graph.insert(node_maps_to_original_graph.end(), decomp_map_2.begin(), decomp_map_2.end());
         return node_maps_to_original_graph; //decomp(sg_2, dg, config, nm_2, cuts, node_maps_to_original_graph);
     }
-
+    */
 
 
     set<Node> cut;
